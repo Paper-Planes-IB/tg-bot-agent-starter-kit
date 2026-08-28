@@ -1,0 +1,2 @@
+# Core bot runs on Python standard library.
+# Optional local voice transcription / OCR tools are installed separately.

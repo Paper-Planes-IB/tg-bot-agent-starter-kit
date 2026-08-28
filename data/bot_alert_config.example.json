@@ -1,0 +1,72 @@
+{
+  "version": "2026-06-13.dashboard-bot-alerts-v1",
+  "timezone": "Asia/Tashkent",
+  "dry_run": true,
+  "default_dashboard_link": "https://example.com/dashboard/",
+  "source_status_allowed": ["real", "partial"],
+  "suppress_statuses": ["proxy", "external", "insufficient_base"],
+  "recipients": {
+    "dry_run": {
+      "env_chat_id": "TG_DASHBOARD_DRY_RUN_CHAT_ID",
+      "description": "Only one PP/test chat is allowed for MVP dry-run sends."
+    },
+    "management": {
+      "env_chat_id": "TG_DASHBOARD_MANAGEMENT_CHAT_ID",
+      "description": "Production-only management chat. Do not use while dry_run is true."
+    }
+  },
+  "digests": [
+    {
+      "id": "DAILY-EXEC",
+      "enabled": true,
+      "schedule": "0 22 * * *",
+      "recipient": "dry_run",
+      "template": "daily_executive_summary_v1",
+      "page": "management",
+      "freshness_max_hours": 4,
+      "source_status_allowed": ["real", "partial"],
+      "fallback": "send_data_gap_notice"
+    },
+    {
+      "id": "MORNING-STATUS",
+      "enabled": true,
+      "schedule": "0 9 * * *",
+      "recipient": "dry_run",
+      "template": "morning_data_status_v1",
+      "page": "management",
+      "freshness_max_hours": 16,
+      "source_status_allowed": ["real", "partial"],
+      "fallback": "send_data_gap_notice"
+    },
+    {
+      "id": "WEEKLY-BUSINESS",
+      "enabled": true,
+      "schedule": "0 10 * * 1",
+      "recipient": "dry_run",
+      "template": "weekly_business_report_v1",
+      "page": "management",
+      "source_status_allowed": ["real", "partial"],
+      "fallback": "send_data_gap_notice"
+    },
+    {
+      "id": "MONTHLY-CLIENTS",
+      "enabled": true,
+      "schedule": "0 9 2 * *",
+      "recipient": "dry_run",
+      "template": "monthly_clients_report_v1",
+      "page": "flowers",
+      "source_status_allowed": ["real", "partial"],
+      "fallback": "send_data_gap_notice"
+    },
+    {
+      "id": "OPERATIONAL-RISKS",
+      "enabled": true,
+      "schedule": "on_threshold_or_daily_09",
+      "recipient": "dry_run",
+      "template": "operational_risks_report_v1",
+      "page": "all",
+      "source_status_allowed": ["real", "partial"],
+      "fallback": "send_data_gap_notice"
+    }
+  ]
+}

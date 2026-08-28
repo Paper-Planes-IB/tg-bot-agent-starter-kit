@@ -1,0 +1,41 @@
+{
+  "digest_config": "data/bot_alert_config.example.json",
+  "agent": {
+    "bot_token_env": "TG_DASHBOARD_BOT_TOKEN",
+    "default_chat_id_env": "TG_DASHBOARD_DRY_RUN_CHAT_ID",
+    "allowed_user_ids_env": "TG_AGENT_ALLOWED_USER_IDS",
+    "allowed_chat_ids_env": "TG_AGENT_ALLOWED_CHAT_IDS",
+    "parse_mode": "HTML",
+    "poll_timeout": 25,
+    "sleep_seconds": 3
+  },
+  "voice": {
+    "enabled": true,
+    "language": "auto",
+    "model": "medium",
+    "max_seconds": 300,
+    "max_download_mb": 25,
+    "transcribe_command": "$HOME/.cache/tg-dashboard-voice-venv/bin/python scripts/transcribe_voice_local.py {input} {output} --model medium --language auto --engine mlx --prompt-file data/tg_voice_prompt.txt"
+  },
+  "sheets": {
+    "webhook_url_env": "TG_AGENT_SHEETS_WEBHOOK_URL",
+    "secret_env": "TG_AGENT_SHEETS_SECRET",
+    "sync_on_save": false
+  },
+  "media": {
+    "store_enabled": true,
+    "store_dir": "data/tg_agent_media"
+  },
+  "ocr": {
+    "enabled": false,
+    "command": "tesseract {input} stdout -l rus+eng",
+    "max_mb": 10,
+    "timeout_seconds": 30
+  },
+  "brain": {
+    "enabled": false,
+    "command": "codex exec --skip-git-repo-check --output-last-message {output} -",
+    "timeout_seconds": 90,
+    "history_turns": 8
+  }
+}

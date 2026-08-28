@@ -1,0 +1,17 @@
+.env
+*.env
+deployment-access/
+data/*.lock
+data/*state*.json
+data/*history*.jsonl
+data/*inbox*.jsonl
+data/*messages*.jsonl
+data/*reminders*.jsonl
+data/tg_agent_logs/
+data/tg_agent_media/
+data/tg_agent_charts/
+data/tg_agent_voice_replies/
+data/dashboard/
+__pycache__/
+*.pyc
+.DS_Store
