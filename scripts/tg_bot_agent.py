@@ -2267,6 +2267,11 @@ def build_voice_status_message(config: AgentConfig) -> str:
         f"Лимит длины: {config.voice_max_seconds} сек.",
         f"Язык: {escape_html(config.voice_language)}",
         f"Модель: {escape_html(config.voice_model)}",
+        f"TTS provider: {escape_html(tts_provider())}",
+        f"TTS model: {escape_html(os.environ.get('TG_AGENT_TTS_MODEL', 'gpt-4o-mini-tts'))}",
+        f"TTS voice: {escape_html(os.environ.get('TG_AGENT_TTS_VOICE', 'nova'))}",
+        f"OpenAI API key: {'да' if os.environ.get('OPENAI_API_KEY', '').strip() else 'нет'}",
+        f"Fallback на macOS voice: {'да' if tts_fallback_enabled() else 'нет'}",
         f"Команда: <code>{escape_html(helper_command)}</code>",
         f"Команда доступна: {'да' if command_available else 'нет'}",
         f"whisper CLI: {escape_html(whisper_path or 'не найден')}",
@@ -2598,7 +2603,7 @@ def render_openai_voice_reply(plain: str, target_path: Path, language: str) -> P
         raise RuntimeError("OPENAI_API_KEY is not set")
     payload = {
         "model": os.environ.get("TG_AGENT_TTS_MODEL", "gpt-4o-mini-tts"),
-        "voice": os.environ.get("TG_AGENT_TTS_VOICE", "alloy"),
+        "voice": os.environ.get("TG_AGENT_TTS_VOICE", "nova"),
         "input": plain,
         "instructions": voice_tts_instructions(language),
         "response_format": "mp3",
@@ -2615,6 +2620,15 @@ def render_openai_voice_reply(plain: str, target_path: Path, language: str) -> P
     with urllib.request.urlopen(request, timeout=120) as response:
         target_path.write_bytes(response.read())
     return target_path
+
+
+def tts_provider() -> str:
+    return os.environ.get("TG_AGENT_TTS_PROVIDER", "openai").strip().lower() or "openai"
+
+
+def tts_fallback_enabled() -> bool:
+    raw = os.environ.get("TG_AGENT_TTS_FALLBACK", "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def convert_audio_to_telegram_voice(source_path: Path, target_path: Path) -> Path:
@@ -2643,14 +2657,20 @@ def render_voice_reply(text: str, message_id: int | None = None, language: str =
     stem = f"voice_reply_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_{message_id or int(time.time())}"
     ogg_path = VOICE_REPLY_DIR / f"{stem}.ogg"
     mp3_path = VOICE_REPLY_DIR / f"{stem}.mp3"
-    try:
-        render_openai_voice_reply(plain, mp3_path, language)
-        convert_audio_to_telegram_voice(mp3_path, ogg_path)
-        cleanup_temp_path(mp3_path)
-        return ogg_path
-    except Exception as exc:
-        append_log("openai_voice_reply_error", {"message_id": message_id, "language": language, "error": str(exc)})
-        cleanup_temp_path(mp3_path)
+    provider = tts_provider()
+    if provider in {"openai", "auto"}:
+        try:
+            render_openai_voice_reply(plain, mp3_path, language)
+            convert_audio_to_telegram_voice(mp3_path, ogg_path)
+            cleanup_temp_path(mp3_path)
+            return ogg_path
+        except Exception as exc:
+            append_log("openai_voice_reply_error", {"message_id": message_id, "language": language, "error": str(exc)})
+            cleanup_temp_path(mp3_path)
+            if provider == "openai" or not tts_fallback_enabled():
+                raise RuntimeError(f"OpenAI TTS недоступен: {exc}")
+    if provider not in {"auto", "macos", "say"}:
+        raise RuntimeError(f"Неизвестный TTS provider: {provider}")
     say_bin = shutil.which("say") or "/usr/bin/say"
     if not Path(say_bin).exists() and not shutil.which(say_bin):
         raise RuntimeError("say command not found")
