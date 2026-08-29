@@ -43,6 +43,8 @@ STATE_FILE = DATA_DIR / "tg_dashboard_agent_state.json"
 LOCK_FILE = DATA_DIR / "tg_dashboard_agent.lock"
 INBOX_FILE = DATA_DIR / "tg_agent_inbox.jsonl"
 GROUP_MESSAGES_FILE = DATA_DIR / "tg_group_messages.jsonl"
+BUSINESS_MESSAGES_FILE = DATA_DIR / "tg_business_messages.jsonl"
+BUSINESS_CONNECTIONS_FILE = DATA_DIR / "tg_business_connections.jsonl"
 REMINDERS_FILE = DATA_DIR / "tg_agent_reminders.jsonl"
 BRAIN_HISTORY_FILE = DATA_DIR / "tg_agent_brain_history.jsonl"
 CHART_DIR = DATA_DIR / "tg_agent_charts"
@@ -110,6 +112,7 @@ SCHEDULED_DIGEST_IDS = {
     "QUESTIONS",
     "OPEN-QUESTIONS",
     "GROUP-IMPORTANT",
+    "BUSINESS-SUMMARY",
     "GROUPS",
     "SEND-GROUP",
     "SCHEDULE-GROUP",
@@ -1142,7 +1145,14 @@ def save_state(state: dict[str, Any]) -> None:
 
 
 def allowed_updates_payload() -> str:
-    return json.dumps(["message", "callback_query"], ensure_ascii=False)
+    return json.dumps([
+        "message",
+        "callback_query",
+        "business_connection",
+        "business_message",
+        "edited_business_message",
+        "deleted_business_messages",
+    ], ensure_ascii=False)
 
 
 def poll_updates(config: AgentConfig, state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1449,6 +1459,8 @@ def normalize_transcribed_command(value: str) -> str:
 
 def resolve_digest_id(text: str) -> str | None:
     normalized = strip_bot_command_mention(normalize_text(text))
+    if normalized.startswith(("/business_summary", "/personal_summary", "/личные_чаты", "сводка по личным чатам", "личные чаты")):
+        return "BUSINESS-SUMMARY"
     if normalized.startswith((
         "/access ",
         "/access_message ",
@@ -1660,6 +1672,8 @@ def build_digest_message(config: AgentConfig, digest_id: str, date_arg: str = "l
         return build_period_log_message(days=7)
     if digest_id == "GROUP-IMPORTANT":
         return build_group_important_message(config, days=1)
+    if digest_id == "BUSINESS-SUMMARY":
+        return build_business_summary_message(config, days=1)
     if digest_id == "GROUPS":
         return build_groups_message()
     if digest_id == "SEND-GROUP":
@@ -2927,6 +2941,59 @@ def append_group_message(message: dict[str, Any]) -> Path:
     return GROUP_MESSAGES_FILE
 
 
+def append_business_connection(connection: dict[str, Any]) -> Path:
+    BUSINESS_CONNECTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with BUSINESS_CONNECTIONS_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(connection, ensure_ascii=False, sort_keys=True) + "\n")
+    return BUSINESS_CONNECTIONS_FILE
+
+
+def read_business_connections(limit: int = 1_000_000) -> list[dict[str, Any]]:
+    if not BUSINESS_CONNECTIONS_FILE.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with BUSINESS_CONNECTIONS_FILE.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows[-limit:]
+
+
+def active_business_connection_owners() -> dict[str, str]:
+    owners: dict[str, str] = {}
+    for row in read_business_connections():
+        connection_id = str(row.get("business_connection_id") or "")
+        owner_id = str(row.get("owner_user_id") or "")
+        is_enabled = bool(row.get("is_enabled"))
+        if not connection_id:
+            continue
+        if is_enabled and owner_id:
+            owners[connection_id] = owner_id
+        else:
+            owners.pop(connection_id, None)
+    return owners
+
+
+def business_connection_allowed(config: AgentConfig, connection_id: str) -> bool:
+    owner_id = active_business_connection_owners().get(str(connection_id) or "")
+    if not owner_id:
+        return False
+    allowed_users = configured_allowed_user_ids(config)
+    return not allowed_users or owner_id in allowed_users
+
+
+def append_business_message(message: dict[str, Any]) -> Path:
+    BUSINESS_MESSAGES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with BUSINESS_MESSAGES_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(message, ensure_ascii=False, sort_keys=True) + "\n")
+    return BUSINESS_MESSAGES_FILE
+
+
 def save_inbox_item(
     config: AgentConfig,
     item: dict[str, Any],
@@ -2999,6 +3066,32 @@ def read_group_messages(limit: int = 1_000_000) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
     return rows[-limit:]
+
+
+def read_business_messages(limit: int = 1_000_000) -> list[dict[str, Any]]:
+    if not BUSINESS_MESSAGES_FILE.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with BUSINESS_MESSAGES_FILE.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows[-limit:]
+
+
+def business_message_date(row: dict[str, Any]) -> dt.date | None:
+    raw = str(row.get("ts") or "")
+    if not raw:
+        return None
+    try:
+        return dt.datetime.fromisoformat(raw).date()
+    except ValueError:
+        return None
 
 
 def write_inbox(rows: list[dict[str, Any]]) -> None:
@@ -7280,6 +7373,60 @@ def build_group_important_message(config: AgentConfig, days: int = 1, limit: int
     return "\n".join(lines)
 
 
+
+def business_message_source_label(row: dict[str, Any], index: int) -> str:
+    chat_title = str(row.get("chat_title") or row.get("chat_id") or "личный чат")
+    username = str(row.get("username") or "").strip()
+    sender = f"@{username}" if username else "без username"
+    message_id = row.get("message_id") or ""
+    return f"[{index}] {escape_html(chat_title)} / {escape_html(sender)} / message_id {escape_html(str(message_id))}"
+
+
+def build_business_summary_message(config: AgentConfig, days: int = 1, limit: int = 15) -> str:
+    days = max(1, min(30, int(days)))
+    today_date = dt.date.today()
+    start_date = today_date - dt.timedelta(days=days - 1)
+    rows = [
+        row for row in read_business_messages()
+        if (row_date := business_message_date(row)) and start_date <= row_date <= today_date
+    ]
+    title = f"Личные business-чаты за {today_date.isoformat()}" if days == 1 else f"Личные business-чаты за {start_date.isoformat()} - {today_date.isoformat()}"
+    lines = [
+        f"<b>{escape_html(title)}</b>",
+        f"Сообщений: {len(rows)}",
+    ]
+    if not rows:
+        lines.extend([
+            "",
+            "Новых сообщений из Telegram Business пока нет.",
+            "Если Фатхулло уже подключил автоматизацию, проверьте Secretary Mode в BotFather и права чтения сообщений в Telegram Business.",
+        ])
+        return "\n".join(lines)
+    by_chat: dict[str, int] = {}
+    for row in rows:
+        chat_title = str(row.get("chat_title") or row.get("chat_id") or "личный чат")
+        by_chat[chat_title] = by_chat.get(chat_title, 0) + 1
+    chat_line = ", ".join(f"{name}: {count}" for name, count in sorted(by_chat.items(), key=lambda item: item[1], reverse=True)[:8])
+    lines.extend(["", f"Чаты: {escape_html(chat_line)}"])
+    selected_rows = list(reversed(rows[-limit:]))
+    summary = summarize_group_messages(config, selected_rows)
+    if summary:
+        lines.extend(["", escape_html(summary)])
+    else:
+        lines.extend(["", "Ключевые сообщения:"])
+        for idx, row in enumerate(selected_rows, start=1):
+            text = compact_text(str(row.get("text") or ""), 220)
+            lines.append(f"- [{idx}] {escape_html(text)}")
+    lines.extend(["", "<b>Источники</b>"])
+    for idx, row in enumerate(selected_rows, start=1):
+        event = str(row.get("event") or "business_message")
+        text = compact_text(str(row.get("text") or ""), 90)
+        lines.append(f"- {business_message_source_label(row, idx)} / {escape_html(event)}: {escape_html(text)}")
+    if len(rows) > limit:
+        lines.append(f"Показано {limit} из {len(rows)}.")
+    return "\n".join(lines)
+
+
 def lms_bug_data_dir() -> Path:
     return Path(os.environ.get("LMS_BUG_BOT_DATA_DIR") or DEFAULT_LMS_BUG_DATA_DIR).expanduser()
 
@@ -8811,6 +8958,22 @@ def telegram_reply_context(message: dict[str, Any]) -> dict[str, Any]:
 
 
 def handle_update(config: AgentConfig, update: dict[str, Any]) -> None:
+    business_connection = update.get("business_connection") or {}
+    if business_connection:
+        handle_business_connection(config, business_connection)
+        return
+    business_message = update.get("business_message") or {}
+    if business_message:
+        handle_business_message(config, business_message, event="business_message")
+        return
+    edited_business_message = update.get("edited_business_message") or {}
+    if edited_business_message:
+        handle_business_message(config, edited_business_message, event="edited_business_message")
+        return
+    deleted_business_messages = update.get("deleted_business_messages") or {}
+    if deleted_business_messages:
+        handle_deleted_business_messages(config, deleted_business_messages)
+        return
     callback = update.get("callback_query") or {}
     if callback:
         handle_callback_query(config, callback)
@@ -8907,6 +9070,97 @@ def handle_update(config: AgentConfig, update: dict[str, Any]) -> None:
             telegram_react(config, chat_id, message_id, "❌")
             telegram_send(config, chat_id, f"Не смог обработать сообщение: {escape_html(str(exc))}")
         append_log("handle_error", {"chat_id": chat_id, "message_id": message_id, "error": str(exc)})
+
+
+
+def handle_business_connection(config: AgentConfig, connection: dict[str, Any]) -> None:
+    user = connection.get("user") or {}
+    owner_id = str(user.get("id") or "")
+    connection_id = str(connection.get("id") or "")
+    allowed_users = configured_allowed_user_ids(config)
+    is_allowed = bool(connection_id) and (not allowed_users or owner_id in allowed_users)
+    rights = connection.get("rights") or {}
+    row = {
+        "ts": dt.datetime.now().isoformat(timespec="seconds"),
+        "business_connection_id": connection_id,
+        "owner_user_id": owner_id,
+        "owner_username": user.get("username") or "",
+        "owner_first_name": user.get("first_name") or "",
+        "owner_last_name": user.get("last_name") or "",
+        "is_enabled": bool(connection.get("is_enabled")),
+        "can_reply": bool(rights.get("can_reply")),
+        "can_read_messages": bool(rights.get("can_read_messages")),
+        "is_allowed": is_allowed,
+    }
+    append_business_connection(row)
+    append_log("business_connection", row)
+    if not is_allowed:
+        append_log("business_connection_ignored", row)
+
+
+def handle_business_message(config: AgentConfig, message: dict[str, Any], event: str = "business_message") -> None:
+    connection_id = str(message.get("business_connection_id") or "")
+    if not business_connection_allowed(config, connection_id):
+        append_log("business_message_ignored", {
+            "business_connection_id": connection_id,
+            "message_id": message.get("message_id") or "",
+            "event": event,
+        })
+        return
+    chat = message.get("chat") or {}
+    user = message.get("from") or {}
+    try:
+        text, meta = text_from_message(config, message)
+    except Exception as exc:
+        append_log("business_message_text_error", {
+            "business_connection_id": connection_id,
+            "message_id": message.get("message_id") or "",
+            "error": str(exc),
+        })
+        text, meta = "", {"kind": "unknown"}
+    row = {
+        "ts": dt.datetime.now().isoformat(timespec="seconds"),
+        "event": event,
+        "business_connection_id": connection_id,
+        "chat_id": chat.get("id") or "",
+        "chat_title": chat.get("title") or " ".join(part for part in [chat.get("first_name"), chat.get("last_name")] if part),
+        "chat_username": chat.get("username") or "",
+        "message_id": message.get("message_id") or "",
+        "user_id": user.get("id") or "",
+        "username": user.get("username") or "",
+        "first_name": user.get("first_name") or "",
+        "last_name": user.get("last_name") or "",
+        "text": text,
+        "kind": meta.get("kind") or "",
+        "source": "telegram_business",
+    }
+    append_business_message(row)
+    append_log("business_message_saved", {
+        "business_connection_id": connection_id,
+        "chat_id": row["chat_id"],
+        "message_id": row["message_id"],
+        "event": event,
+        "kind": row["kind"],
+    })
+
+
+def handle_deleted_business_messages(config: AgentConfig, payload: dict[str, Any]) -> None:
+    connection_id = str(payload.get("business_connection_id") or "")
+    if not business_connection_allowed(config, connection_id):
+        append_log("deleted_business_messages_ignored", {"business_connection_id": connection_id})
+        return
+    chat = payload.get("chat") or {}
+    message_ids = payload.get("message_ids") or []
+    append_business_message({
+        "ts": dt.datetime.now().isoformat(timespec="seconds"),
+        "event": "deleted_business_messages",
+        "business_connection_id": connection_id,
+        "chat_id": chat.get("id") or "",
+        "chat_title": chat.get("title") or " ".join(part for part in [chat.get("first_name"), chat.get("last_name")] if part),
+        "message_ids": message_ids,
+        "source": "telegram_business",
+        "text": "Удалены сообщения: " + ", ".join(str(x) for x in message_ids),
+    })
 
 
 def handle_callback_query(config: AgentConfig, callback: dict[str, Any]) -> None:
