@@ -729,7 +729,7 @@ def is_authorized(config: AgentConfig, chat_id: str | int = "", user_id: str | i
 
 
 def is_public_access_command(text: str) -> bool:
-    normalized = normalize_text(text)
+    normalized = strip_bot_command_mention(normalize_text(text))
     return normalized in {
         "/start",
         "/help",
@@ -739,6 +739,10 @@ def is_public_access_command(text: str) -> bool:
         "кто я",
         "мой id",
     }
+
+
+def strip_bot_command_mention(text: str) -> str:
+    return re.sub(r"^(/[\w_]+)@[a-z0-9_]+(\s|$)", r"\1\2", text, flags=re.IGNORECASE).strip()
 
 
 def authorization_detail(config: AgentConfig) -> str:
@@ -1444,7 +1448,7 @@ def normalize_transcribed_command(value: str) -> str:
 
 
 def resolve_digest_id(text: str) -> str | None:
-    normalized = normalize_text(text)
+    normalized = strip_bot_command_mention(normalize_text(text))
     if normalized.startswith((
         "/access ",
         "/access_message ",
