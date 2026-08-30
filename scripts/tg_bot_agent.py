@@ -726,9 +726,13 @@ def is_authorized(config: AgentConfig, chat_id: str | int = "", user_id: str | i
     allowed_chats = configured_allowed_chat_ids(config)
     if not allowed_users and not allowed_chats:
         return True
-    chat_ok = True if not allowed_chats else str(chat_id) in allowed_chats
-    user_ok = True if not allowed_users else str(user_id) in allowed_users
-    return chat_ok and user_ok
+    chat_ok = bool(chat_id) and str(chat_id) in allowed_chats
+    user_ok = bool(user_id) and str(user_id) in allowed_users
+    if chat_ok:
+        return True
+    if user_ok and (not allowed_chats or str(chat_id) == str(user_id)):
+        return True
+    return False
 
 
 def is_public_access_command(text: str) -> bool:
@@ -8990,6 +8994,8 @@ def handle_update(config: AgentConfig, update: dict[str, Any]) -> None:
         text, meta = text_from_message(config, message)
         if not is_authorized(config, chat_id=chat_id, user_id=user_id) and not is_public_access_command(text):
             append_log("unauthorized_message", {"chat_id": chat_id, "user_id": user_id, "message_id": message_id, "text": text})
+            if is_group_chat(chat):
+                return
             telegram_send(config, chat_id, f"Нет доступа к {BOT_DISPLAY_NAME}. Для подключения отправьте /whoami и перешлите ответ администратору.")
             return
         reply_context = telegram_reply_context(message)
