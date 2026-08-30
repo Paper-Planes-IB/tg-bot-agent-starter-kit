@@ -4525,9 +4525,6 @@ def pinned_tasks_message(chat_id: str | int = "") -> str:
     return "\n".join([
         "<b>Задачи из этого чата</b>" if str(chat_id or "") and not str(chat_id).startswith("-") else f"<b>Задачи {BOT_DISPLAY_NAME}</b>",
         " · ".join(bits),
-        "",
-        "Кнопки ниже отсортированы: в работе, срочные, обычные, когда-нибудь.",
-        "Полный список: /tasks или /all_tasks.",
         f"<i>обновлено {escape_html(updated)}</i>",
     ])
 
@@ -7539,6 +7536,32 @@ TG_MANAGEMENT_ROLE_CONTEXT_UZ = "\n".join([
 ])
 
 
+TG_COMMUNICATION_STYLE_RU = "\n".join([
+    "Стиль коммуникации:",
+    "- Пиши коротко: одна мысль — одна строка.",
+    "- Начинай с вывода, затем задачи и пинги.",
+    "- Не объясняй очевидное и не пересказывай ход переписки.",
+    "- Каждый пункт должен отвечать на вопрос: что произошло, почему важно, что сделать дальше.",
+    "- Убирай приветствия, повторы, технический шум и слабые сигналы.",
+    "- Не пиши больше 3 строк в одном разделе, если нет настоящей управленческой необходимости.",
+    "- Формулируй задачи глаголом действия: проверить, согласовать, ответить, закрыть, уточнить.",
+    "- Если ответственный неясен, пиши 'ответственный неясен', не назначай случайного человека.",
+])
+
+
+TG_COMMUNICATION_STYLE_UZ = "\n".join([
+    "Kommunikatsiya uslubi:",
+    "- Qisqa yoz: bitta fikr — bitta satr.",
+    "- Avval xulosa, keyin vazifalar va pinglar.",
+    "- Oddiy narsani tushuntirma va yozishma ketma-ketligini qayta aytma.",
+    "- Har bir band javob bersin: nima bo'ldi, nega muhim, keyin nima qilish kerak.",
+    "- Salomlashish, takror, texnik shovqin va zaif signallarni olib tashla.",
+    "- Haqiqiy boshqaruv zarurati bo'lmasa, bitta bo'limda 3 satrdan oshirma.",
+    "- Vazifalarni harakat fe'li bilan yoz: tekshirish, kelishish, javob berish, yopish, aniqlashtirish.",
+    "- Mas'ul noaniq bo'lsa, 'mas'ul noaniq' deb yoz, tasodifiy odam tayinlama.",
+])
+
+
 def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) -> str:
     uz_count = sum(1 for row in rows if detect_text_language(str(row.get("text") or "")) == "uz")
     use_uzbek = uz_count > 0
@@ -7556,8 +7579,9 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
             "Telegram chatlaridagi xabarlar bo'yicha qisqa boshqaruv summary tuz.",
             "Maqsad: Fathullo yoki rahbar 40 soniyada nima bo'lganini, nima hal qilinganini, nima to'xtab qolganini va kimga yozish kerakligini tushunsin.",
             TG_MANAGEMENT_ROLE_CONTEXT_UZ,
+            TG_COMMUNICATION_STYLE_UZ,
             "Har bir xabarni alohida yozma. Faqat muhim mavzular, vazifalar, risklar va javobsiz savollarni umumlashtir.",
-            "Maksimum 2-4 muhim signal va 2-6 vazifa yoz. Mayda xabarlar, salomlashish va takrorlarni tashlab ket.",
+            "Maksimum 1-3 muhim signal va 1-4 vazifa yoz. Mayda xabarlar, salomlashish, buzilgan matn va takrorlarni tashlab ket.",
             "Har bir mavzu yoki ping bandini chat nomidan boshlagin: 'Chat nomi — ...'. Shaxsiy yozishma bo'lsa: 'Shaxsiy chat: Ism — ...'.",
             "Agar xabarlarda emotsiya, shubha, va'dadan keyin jimlik, konflikt, risk yoki yashirin topshiriq bo'lsa, buni alohida ko'rsat.",
             "O'zbek tilida yoz. Matn aniq, jonli va ishga yaroqli bo'lsin. Markdown jadval ishlatma.",
@@ -7570,10 +7594,10 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
             "1 qisqa abzas: muhokamalarning asosiy ma'nosi, 2 gapdan oshmasin.",
             "",
             "Muhim narsalar:",
-            "- 2-4 eng muhim signal. Format: 'Chat nomi — nimani anglatadi va nima uchun muhim [manba]'.",
+            "- 1-3 eng muhim signal. Format: 'Chat nomi — nimani anglatadi va nima qilish kerak [manba]'.",
             "",
             "Vazifalar:",
-            "- topshiriqlar va keyingi qadamlar. Format: 'Mas'ul — nima qilishi kerak / muddat bo'lsa yoz / manba'. Vazifa bo'lmasa: 'Aniq vazifalar ko'rinmayapti.'",
+            "- 1-4 topshiriq. Format: 'Mas'ul — nima qilishi kerak / muddat bo'lsa yoz / manba'. Vazifa bo'lmasa: 'Aniq vazifalar ko'rinmayapti.'",
             "",
             "Nima to'xtab qoldi:",
             "- javobsiz savollar, keyingi qadamsiz va'dalar, kelishuvdan keyingi jimlik, mas'ullar bilan risklar. Hech narsa bo'lmasa: 'Aniq to'xtab qolgan masala ko'rinmayapti.'",
@@ -7589,8 +7613,9 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Сделай короткую управленческую summary по сообщениям из Telegram-чатов.",
         "Цель: Наталья должна за 40 секунд понять, что произошло, что решено, где зависло и кого пинговать.",
         TG_MANAGEMENT_ROLE_CONTEXT_RU,
+        TG_COMMUNICATION_STYLE_RU,
         "Не расписывай каждое сообщение. Обобщай только важные сигналы, задачи, риски и вопросы без ответа.",
-        "Дай максимум 2-4 важных сигнала и 2-6 задач. Мелкие реплики, приветствия и повторы отсекай.",
+        "Дай максимум 1-3 важных сигнала и 1-4 задачи. Мелкие реплики, приветствия, битый текст и повторы отсекай.",
         "Каждый пункт темы или пинга начинай с названия чата: 'Название чата — ...'. Если это личная переписка, пиши: 'Личный чат: Имя — ...'.",
         "Если в сообщениях есть эмоции, сомнения, тишина после обещания, конфликт, риск или скрытое поручение, явно вытащи это в вывод.",
         "Пиши по-русски, живо и конкретно. Без markdown-таблиц, без канцелярита, без рекламного тона.",
@@ -7603,10 +7628,10 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "1 короткий абзац: главный смысл обсуждений, не больше 2 предложений.",
         "",
         "Важное:",
-        "- 2-4 главных сигнала. Формат: 'Название чата — что это значит и почему важно [источник]'.",
+        "- 1-3 главных сигнала. Формат: 'Название чата — что это значит и что делать [источник]'.",
         "",
         "Задачи:",
-        "- поручения и следующие шаги. Формат: 'Ответственный — что сделать / срок, если есть / источник'. Если задач нет, напиши: 'Явных задач не вижу.'",
+        "- 1-4 поручения. Формат: 'Ответственный — что сделать / срок, если есть / источник'. Если задач нет, напиши: 'Явных задач не вижу.'",
         "",
         "Что зависло:",
         "- вопросы без ответа, обещания без следующего шага, тишина после договорённости, риски с ответственными. Если ничего нет, напиши: 'Явных зависаний не вижу.'",
@@ -7632,6 +7657,7 @@ def format_summary_html(summary: str, use_uzbek: bool) -> str:
         "Nima haqida gaplashishdi:": "💬 <b>Nima haqida gaplashishdi</b>",
         "Vazifalar:": "✅ <b>Vazifalar</b>",
         "Nima hal qilindi:": "✅ <b>Nima hal qilindi</b>",
+        "Nima to‘xtab qoldi:": "⚠️ <b>Nima to‘xtab qoldi</b>",
         "Nima to'xtab qoldi:": "⚠️ <b>Nima to&#x27;xtab qoldi</b>",
         "Nima to&#x27;xtab qoldi:": "⚠️ <b>Nima to&#x27;xtab qoldi</b>",
         "Kimga yozish kerak:": "👤 <b>Kimga yozish kerak</b>",
@@ -7698,7 +7724,7 @@ def build_group_important_message(
         for idx, row in enumerate(selected_rows, start=1):
             text = compact_text(str(row.get("text") or ""), 220)
             lines.append(f"- [{idx}] {escape_html(text)}")
-    source_limit = min(len(selected_rows), 6)
+    source_limit = min(len(selected_rows), 4)
     lines.extend(["", "━━━━━━━━━━━━", f"🔎 <b>{'Asosiy manbalar' if use_uzbek else 'Основные источники'}</b>"])
     chat_links: dict[str, str] = {}
     for idx, row in enumerate(selected_rows[:source_limit], start=1):
@@ -7824,7 +7850,7 @@ def build_business_summary_message(
         for idx, row in enumerate(selected_rows, start=1):
             text = compact_text(str(row.get("text") or ""), 220)
             lines.append(f"- [{idx}] {escape_html(text)}")
-    source_limit = min(len(selected_rows), 6)
+    source_limit = min(len(selected_rows), 4)
     lines.extend(["", "━━━━━━━━━━━━", f"🔎 <b>{'Asosiy manbalar' if use_uzbek else 'Основные источники'}</b>"])
     for idx, row in enumerate(selected_rows[:source_limit], start=1):
         event = str(row.get("event") or "business_message")
