@@ -7492,7 +7492,7 @@ def format_summary_html(summary: str, use_uzbek: bool) -> str:
     }
     for source, target in replacements.items():
         escaped = escaped.replace(source, target)
-    escaped = re.sub(r"\n{2,}", "\n\n━━━━━━━━━━━━\n\n", escaped)
+    escaped = re.sub(r"\n{3,}", "\n\n", escaped)
     return escaped
 
 
