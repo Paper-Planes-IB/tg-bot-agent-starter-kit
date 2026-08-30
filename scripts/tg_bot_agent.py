@@ -6580,6 +6580,17 @@ def scheduled_digest_window(row: dict[str, Any], all_rows: list[dict[str, Any]] 
         candidate_time = parse_iso_datetime(candidate.get("last_window_end") or candidate.get("last_fired_at") or candidate.get("fired_at"))
         if candidate_time and candidate_time < end_time:
             previous_times.append(candidate_time)
+    if not previous_times:
+        for candidate in all_rows or []:
+            if candidate is row:
+                continue
+            if str(candidate.get("text") or "").strip() != text:
+                continue
+            if str(candidate.get("chat_id") or "") != chat_id:
+                continue
+            candidate_time = parse_iso_datetime(candidate.get("fire_at"))
+            if candidate_time and candidate_time < end_time:
+                previous_times.append(candidate_time)
     start_time = max(previous_times) if previous_times else parse_iso_datetime(row.get("last_window_end") or row.get("last_fired_at"))
     if not start_time:
         start_time = previous_recurrence_fire_at(str(row.get("recurrence") or ""), end_time)
