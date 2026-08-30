@@ -3198,6 +3198,29 @@ def business_message_date(row: dict[str, Any]) -> dt.date | None:
         return None
 
 
+def row_datetime(row: dict[str, Any]) -> dt.datetime | None:
+    return parse_iso_datetime(row.get("ts"))
+
+
+def row_in_window(row: dict[str, Any], start_dt: dt.datetime | None, end_dt: dt.datetime | None) -> bool:
+    stamp = row_datetime(row)
+    if not stamp:
+        return False
+    if start_dt and stamp <= start_dt:
+        return False
+    if end_dt and stamp > end_dt:
+        return False
+    return True
+
+
+def format_period_window(start_dt: dt.datetime | None, end_dt: dt.datetime | None, use_uzbek: bool) -> str:
+    if not start_dt or not end_dt:
+        return ""
+    if start_dt.date() == end_dt.date():
+        return f"{start_dt.date().isoformat()} {start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
+    return f"{start_dt.strftime('%Y-%m-%d %H:%M')} - {end_dt.strftime('%Y-%m-%d %H:%M')}"
+
+
 def write_inbox(rows: list[dict[str, Any]]) -> None:
     INBOX_FILE.parent.mkdir(parents=True, exist_ok=True)
     with INBOX_FILE.open("w", encoding="utf-8") as fh:
@@ -6474,13 +6497,25 @@ def scheduled_digest_id(text: str) -> str:
     return digest_id if digest_id in SCHEDULED_DIGEST_IDS else ""
 
 
-def render_due_reminder_text(config: AgentConfig, row: dict[str, Any]) -> str:
+def render_due_reminder_text(config: AgentConfig, row: dict[str, Any], all_rows: list[dict[str, Any]] | None = None) -> str:
     text = str(row.get("text") or "").strip()
     if row.get("kind") == "group_send":
         return escape_html(text)
     digest_id = scheduled_digest_id(text)
     if not digest_id:
         return "<b>Напоминание</b>\n" + escape_html(text)
+    window = scheduled_digest_window(row, all_rows or [])
+    if digest_id == "GROUP-IMPORTANT":
+        answer = build_group_important_message(config, start_dt=window[0], end_dt=window[1])
+    elif digest_id == "BUSINESS-SUMMARY":
+        answer = build_business_summary_message(config, start_dt=window[0], end_dt=window[1])
+    else:
+        answer = ""
+    if answer:
+        return "\n".join([
+            f"<b>Scheduled report: {escape_html(text)}</b>",
+            answer,
+        ])
     result = process_text_command(
         config,
         text,
@@ -6493,6 +6528,66 @@ def render_due_reminder_text(config: AgentConfig, row: dict[str, Any]) -> str:
         f"<b>Scheduled report: {escape_html(text)}</b>",
         str(result.get("answer") or build_digest_message(config, digest_id)),
     ])
+
+
+def parse_iso_datetime(value: Any) -> dt.datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return dt.datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def previous_recurrence_fire_at(recurrence: str, end_time: dt.datetime) -> dt.datetime | None:
+    if recurrence.startswith("every:"):
+        spec = recurrence.removeprefix("every:")
+        match = re.fullmatch(r"(\d{1,4})([mhd])", spec)
+        if not match:
+            return None
+        amount = int(match.group(1))
+        unit = match.group(2)
+        if unit == "m":
+            return end_time - dt.timedelta(minutes=amount)
+        if unit == "h":
+            return end_time - dt.timedelta(hours=amount)
+        return end_time - dt.timedelta(days=amount)
+    if recurrence.startswith("daily@"):
+        match = re.fullmatch(r"daily@(\d{2}):(\d{2})", recurrence)
+        if not match:
+            return None
+        hh, mm = int(match.group(1)), int(match.group(2))
+        candidate = dt.datetime.combine(end_time.date(), dt.time(hh, mm))
+        if candidate >= end_time:
+            candidate -= dt.timedelta(days=1)
+        return candidate
+    return None
+
+
+def scheduled_digest_window(row: dict[str, Any], all_rows: list[dict[str, Any]] | None = None) -> tuple[dt.datetime, dt.datetime]:
+    end_time = parse_iso_datetime(row.get("fire_at")) or dt.datetime.now()
+    text = str(row.get("text") or "").strip()
+    chat_id = str(row.get("chat_id") or "")
+    previous_times: list[dt.datetime] = []
+    for candidate in all_rows or []:
+        if candidate is row:
+            continue
+        if str(candidate.get("text") or "").strip() != text:
+            continue
+        if str(candidate.get("chat_id") or "") != chat_id:
+            continue
+        candidate_time = parse_iso_datetime(candidate.get("last_window_end") or candidate.get("last_fired_at") or candidate.get("fired_at"))
+        if candidate_time and candidate_time < end_time:
+            previous_times.append(candidate_time)
+    start_time = max(previous_times) if previous_times else parse_iso_datetime(row.get("last_window_end") or row.get("last_fired_at"))
+    if not start_time:
+        start_time = previous_recurrence_fire_at(str(row.get("recurrence") or ""), end_time)
+    if not start_time:
+        start_time = dt.datetime.combine(end_time.date(), dt.time.min)
+    if start_time > end_time:
+        start_time = dt.datetime.combine(end_time.date(), dt.time.min)
+    return start_time, end_time
 
 
 def process_due_reminders(now: dt.datetime, send_fn: Any) -> int:
@@ -6510,8 +6605,9 @@ def process_due_reminders(now: dt.datetime, send_fn: Any) -> int:
         chat_id = row.get("chat_id") or ""
         if not chat_id:
             continue
-        send_fn(chat_id, row)
+        send_fn(chat_id, row, rows)
         fired_at = now
+        row["last_window_end"] = str(row.get("fire_at") or fired_at.isoformat(timespec="seconds"))
         row["last_fired_at"] = fired_at.isoformat(timespec="seconds")
         row["fired_count"] = int(row.get("fired_count") or 0) + 1
         recurrence = str(row.get("recurrence") or "")
@@ -6532,10 +6628,10 @@ def check_due_reminders(config: AgentConfig) -> int:
     if not os.environ.get(config.token_env):
         return 0
 
-    def send(chat_id: str | int, row: dict[str, Any]) -> None:
+    def send(chat_id: str | int, row: dict[str, Any], all_rows: list[dict[str, Any]]) -> None:
         target_chat = chat_id or os.environ.get(config.default_chat_env, "")
         if target_chat:
-            telegram_send(config, target_chat, render_due_reminder_text(config, row))
+            telegram_send(config, target_chat, render_due_reminder_text(config, row, all_rows))
 
     return process_due_reminders(dt.datetime.now(), send)
 
@@ -7387,6 +7483,26 @@ def run_brain_prompt(config: AgentConfig, prompt_text: str, timeout: int | None 
     return {"ok": True, "answer": answer}
 
 
+TG_MANAGEMENT_ROLE_CONTEXT_RU = "\n".join([
+    "Контекст ролей Toshkent Gullari:",
+    "- Мухрим Абдулазизов — CEO. Не ставь его операционным исполнителем, если в сообщениях нет прямого поручения; выноси к нему только стратегические вопросы, эскалации, бюджет, приоритеты и финальные решения.",
+    "- Мубарак, Абдуазиз и Махинур — соучредители, примерно сопоставимые по статусу.",
+    "- Абдулазиз и Мухаммаджон — участники опергруппы наравне с Фатхулло.",
+    "- Фатхулло — получатель сводок и участник опергруппы; задачи для него формулируй как операционные следующие шаги, если это следует из переписки.",
+    "- По другим сотрудникам Ташкент Флоры двигайся по контексту переписки.",
+])
+
+
+TG_MANAGEMENT_ROLE_CONTEXT_UZ = "\n".join([
+    "Toshkent Gullari rollari konteksti:",
+    "- Muxrim Abdulazizov — CEO. Xabarlarda to'g'ridan-to'g'ri topshiriq bo'lmasa, uni operatsion ijrochi qilib yozma; unga strategik masalalar, eskalatsiya, budjet, ustuvorliklar va yakuniy qarorlarni chiqargin.",
+    "- Muborak, Abduaziz va Mahinur — hammuassislar, statusi taxminan bir xil.",
+    "- Abduaziz va Muhammadjon — Fathullo bilan bir qatorda operguruh ishtirokchilari.",
+    "- Fathullo — summary oluvchi va operguruh ishtirokchisi; yozishmadan kelib chiqsa, unga operatsion keyingi qadamlarni yoz.",
+    "- Toshkent Floraning boshqa xodimlari bo'yicha kontekstga qarab xulosa qil.",
+])
+
+
 def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) -> str:
     uz_count = sum(1 for row in rows if detect_text_language(str(row.get("text") or "")) == "uz")
     use_uzbek = uz_count > 0
@@ -7403,6 +7519,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         prompt = "\n\n".join([
             "Telegram chatlaridagi xabarlar bo'yicha qisqa boshqaruv summary tuz.",
             "Maqsad: Fathullo yoki rahbar 40 soniyada nima bo'lganini, nima hal qilinganini, nima to'xtab qolganini va kimga yozish kerakligini tushunsin.",
+            TG_MANAGEMENT_ROLE_CONTEXT_UZ,
             "Har bir xabarni alohida yozma. Faqat muhim mavzular, vazifalar, risklar va javobsiz savollarni umumlashtir.",
             "Maksimum 2-4 muhim signal va 2-6 vazifa yoz. Mayda xabarlar, salomlashish va takrorlarni tashlab ket.",
             "Har bir mavzu yoki ping bandini chat nomidan boshlagin: 'Chat nomi — ...'. Shaxsiy yozishma bo'lsa: 'Shaxsiy chat: Ism — ...'.",
@@ -7435,6 +7552,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         prompt = "\n\n".join([
         "Сделай короткую управленческую summary по сообщениям из Telegram-чатов.",
         "Цель: Наталья должна за 40 секунд понять, что произошло, что решено, где зависло и кого пинговать.",
+        TG_MANAGEMENT_ROLE_CONTEXT_RU,
         "Не расписывай каждое сообщение. Обобщай только важные сигналы, задачи, риски и вопросы без ответа.",
         "Дай максимум 2-4 важных сигнала и 2-6 задач. Мелкие реплики, приветствия и повторы отсекай.",
         "Каждый пункт темы или пинга начинай с названия чата: 'Название чата — ...'. Если это личная переписка, пиши: 'Личный чат: Имя — ...'.",
@@ -7496,26 +7614,38 @@ def format_summary_html(summary: str, use_uzbek: bool) -> str:
     return escaped
 
 
-def build_group_important_message(config: AgentConfig, days: int = 1, limit: int = 10) -> str:
+def build_group_important_message(
+    config: AgentConfig,
+    days: int = 1,
+    limit: int = 10,
+    start_dt: dt.datetime | None = None,
+    end_dt: dt.datetime | None = None,
+) -> str:
     days = max(1, min(30, int(days)))
-    today_date = dt.date.today()
+    today_date = (end_dt or dt.datetime.now()).date()
     start_date = today_date - dt.timedelta(days=days - 1)
-    rows = [
-        row for row in read_group_messages()
-        if (row_date := group_message_date(row)) and start_date <= row_date <= today_date
-    ]
+    if start_dt or end_dt:
+        rows = [row for row in read_group_messages() if row_in_window(row, start_dt, end_dt)]
+    else:
+        rows = [
+            row for row in read_group_messages()
+            if (row_date := group_message_date(row)) and start_date <= row_date <= today_date
+        ]
     captured = [row for row in rows if str(row.get("capture_reason") or "").strip()]
     group_priority_terms = priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
     source_rows = captured or rows
     selected_rows = priority_sorted_rows(source_rows, group_priority_terms)[:limit]
     use_uzbek = rows_contain_uzbek(selected_rows)
     if use_uzbek:
-        title = f"Tashqi chatlardagi muhim xabarlar: {today_date.isoformat()}" if days == 1 else f"Tashqi chatlardagi muhim xabarlar: {start_date.isoformat()} - {today_date.isoformat()}"
+        title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
+        title = f"Tashqi chatlardagi muhim xabarlar: {title_period}"
     else:
-        title = f"Важное во внешних чатах за {today_date.isoformat()}" if days == 1 else f"Важное во внешних чатах за {start_date.isoformat()} - {today_date.isoformat()}"
+        title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
+        title = f"Важное во внешних чатах за {title_period}"
     lines = [
         f"📌 <b>{escape_html(title)}</b>",
         "━━━━━━━━━━━━",
+        f"🕘 {'Davr' if use_uzbek else 'Период'}: <b>{escape_html(title_period)}</b>",
         f"📨 {'Ulangan chatlardagi xabarlar' if use_uzbek else 'Сообщений в подключенных чатах'}: <b>{len(rows)}</b>",
         f"⭐ {'Muhim deb ajratilgan' if use_uzbek else 'Захвачено как важное'}: <b>{len(captured)}</b>",
     ]
@@ -7609,24 +7739,36 @@ def business_message_source_label(row: dict[str, Any], index: int) -> str:
     return f"[{index}] Чат: {escape_html(chat_title)} / Автор: {escape_html(sender)} / message_id {escape_html(str(message_id))}"
 
 
-def build_business_summary_message(config: AgentConfig, days: int = 1, limit: int = 15) -> str:
+def build_business_summary_message(
+    config: AgentConfig,
+    days: int = 1,
+    limit: int = 15,
+    start_dt: dt.datetime | None = None,
+    end_dt: dt.datetime | None = None,
+) -> str:
     days = max(1, min(30, int(days)))
-    today_date = dt.date.today()
+    today_date = (end_dt or dt.datetime.now()).date()
     start_date = today_date - dt.timedelta(days=days - 1)
-    rows = [
-        row for row in read_business_messages()
-        if (row_date := business_message_date(row)) and start_date <= row_date <= today_date
-    ]
+    if start_dt or end_dt:
+        rows = [row for row in read_business_messages() if row_in_window(row, start_dt, end_dt)]
+    else:
+        rows = [
+            row for row in read_business_messages()
+            if (row_date := business_message_date(row)) and start_date <= row_date <= today_date
+        ]
     business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
     selected_rows = priority_sorted_rows(rows, business_priority_terms)[:limit]
     use_uzbek = rows_contain_uzbek(selected_rows)
     if use_uzbek:
-        title = f"Shaxsiy business-chatlar: {today_date.isoformat()}" if days == 1 else f"Shaxsiy business-chatlar: {start_date.isoformat()} - {today_date.isoformat()}"
+        title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
+        title = f"Shaxsiy business-chatlar: {title_period}"
     else:
-        title = f"Личные business-чаты за {today_date.isoformat()}" if days == 1 else f"Личные business-чаты за {start_date.isoformat()} - {today_date.isoformat()}"
+        title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
+        title = f"Личные business-чаты за {title_period}"
     lines = [
         f"📌 <b>{escape_html(title)}</b>",
         "━━━━━━━━━━━━",
+        f"🕘 {'Davr' if use_uzbek else 'Период'}: <b>{escape_html(title_period)}</b>",
         f"📨 {'Xabarlar' if use_uzbek else 'Сообщений'}: <b>{len(rows)}</b>",
     ]
     if not rows:
