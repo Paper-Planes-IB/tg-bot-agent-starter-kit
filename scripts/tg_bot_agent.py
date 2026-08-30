@@ -65,6 +65,8 @@ CLICKUP_TEAM_ID = os.environ.get("CLICKUP_TEAM_ID", "")
 CLICKUP_LIST_ID = os.environ.get("CLICKUP_LIST_ID", "")
 CLICKUP_LIST_NAME = os.environ.get("CLICKUP_LIST_NAME", "Main")
 CLICKUP_TELEGRAM_USER_MAP = os.environ.get("CLICKUP_TELEGRAM_USER_MAP", "")
+DEFAULT_PRIORITY_BUSINESS_CHATS = "Мухрим Абдулазизов,Муборак,Мохинул,Абдуазиз"
+DEFAULT_PRIORITY_GROUP_CHATS = "TG-PP,TG+PP,Опер группа,ОГ"
 TG_FLOWERS_WASTE_SPREADSHEET_ID = os.environ.get("TG_FLOWERS_WASTE_SPREADSHEET_ID", "")
 TG_FLOWERS_WASTE_JOURNAL_GID = os.environ.get("TG_FLOWERS_WASTE_JOURNAL_GID", "")
 TG_FLOWERS_WASTE_SUMMARY_GID = os.environ.get("TG_FLOWERS_WASTE_SUMMARY_GID", "")
@@ -7386,14 +7388,11 @@ def build_group_important_message(config: AgentConfig, days: int = 1, limit: int
     if not rows:
         lines.extend(["", "За период нет сохраненных сообщений из внешних чатов."])
         return "\n".join(lines)
-    by_chat: dict[str, int] = {}
-    for row in rows:
-        chat_title = str(row.get("chat_title") or row.get("chat_id") or "без названия")
-        by_chat[chat_title] = by_chat.get(chat_title, 0) + 1
-    chat_line = ", ".join(f"{name}: {count}" for name, count in sorted(by_chat.items(), key=lambda item: item[1], reverse=True)[:5])
+    group_priority_terms = priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
+    chat_line = priority_chat_counts(rows, group_priority_terms, limit=5)
     lines.extend(["", f"Чаты: {escape_html(chat_line)}"])
     source_rows = captured or rows
-    selected_rows = list(reversed(source_rows[-limit:]))
+    selected_rows = priority_sorted_rows(source_rows, group_priority_terms)[:limit]
     summary = summarize_group_messages(config, selected_rows)
     if summary:
         lines.extend(["", escape_html(summary)])
@@ -7412,6 +7411,52 @@ def build_group_important_message(config: AgentConfig, days: int = 1, limit: int
         lines.append(f"Показано {limit} из {len(source_rows)}.")
     return "\n".join(lines)
 
+
+
+def priority_terms(env_name: str, default: str) -> list[str]:
+    raw = os.environ.get(env_name, default)
+    return [normalize_text(part) for part in raw.split(",") if part.strip()]
+
+
+def row_search_text(row: dict[str, Any]) -> str:
+    return normalize_text(" ".join(str(row.get(key) or "") for key in (
+        "chat_title",
+        "chat_username",
+        "first_name",
+        "last_name",
+        "username",
+    )))
+
+
+def priority_rank(row: dict[str, Any], terms: list[str]) -> int:
+    haystack = row_search_text(row)
+    for idx, term in enumerate(terms):
+        if term and term in haystack:
+            return idx
+    return len(terms)
+
+
+def row_ts_sort_value(row: dict[str, Any]) -> float:
+    raw = str(row.get("ts") or "")
+    try:
+        return dt.datetime.fromisoformat(raw).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def priority_sorted_rows(rows: list[dict[str, Any]], terms: list[str]) -> list[dict[str, Any]]:
+    return sorted(rows, key=lambda row: (priority_rank(row, terms), -row_ts_sort_value(row)))
+
+
+def priority_chat_counts(rows: list[dict[str, Any]], terms: list[str], limit: int) -> str:
+    counts: dict[str, int] = {}
+    sample_row: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        chat_title = str(row.get("chat_title") or row.get("chat_id") or "чат")
+        counts[chat_title] = counts.get(chat_title, 0) + 1
+        sample_row.setdefault(chat_title, row)
+    ordered = sorted(counts.items(), key=lambda item: (priority_rank(sample_row[item[0]], terms), -item[1], item[0].casefold()))
+    return ", ".join(f"{name}: {count}" for name, count in ordered[:limit])
 
 
 def business_message_source_label(row: dict[str, Any], index: int) -> str:
@@ -7442,13 +7487,10 @@ def build_business_summary_message(config: AgentConfig, days: int = 1, limit: in
             "Если Фатхулло уже подключил автоматизацию, проверьте Secretary Mode в BotFather и права чтения сообщений в Telegram Business.",
         ])
         return "\n".join(lines)
-    by_chat: dict[str, int] = {}
-    for row in rows:
-        chat_title = str(row.get("chat_title") or row.get("chat_id") or "личный чат")
-        by_chat[chat_title] = by_chat.get(chat_title, 0) + 1
-    chat_line = ", ".join(f"{name}: {count}" for name, count in sorted(by_chat.items(), key=lambda item: item[1], reverse=True)[:8])
+    business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
+    chat_line = priority_chat_counts(rows, business_priority_terms, limit=8)
     lines.extend(["", f"Чаты: {escape_html(chat_line)}"])
-    selected_rows = list(reversed(rows[-limit:]))
+    selected_rows = priority_sorted_rows(rows, business_priority_terms)[:limit]
     summary = summarize_group_messages(config, selected_rows)
     if summary:
         lines.extend(["", escape_html(summary)])

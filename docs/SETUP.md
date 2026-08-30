@@ -34,6 +34,15 @@ TG_AGENT_ALLOWED_BUSINESS_CONNECTION_IDS=...
 TG_AGENT_REACTIONS_ENABLED=0
 ```
 
+Приоритеты для сводок задаются списками через запятую:
+
+```bash
+TG_AGENT_PRIORITY_BUSINESS_CHATS=Мухрим Абдулазизов,Муборак,Мохинул,Абдуазиз
+TG_AGENT_PRIORITY_GROUP_CHATS=TG-PP,TG+PP,Опер группа,ОГ
+```
+
+Сообщения из этих личных чатов и групп будут попадать в сводки выше остальных.
+
 ## 2. Дашборд
 
 Если бот отвечает на вопросы по дашборду, положить JSON-данные в `data/dashboard` или указать путь:
