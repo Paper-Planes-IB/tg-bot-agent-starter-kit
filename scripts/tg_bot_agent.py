@@ -4482,11 +4482,22 @@ def task_keyboard_for_digest(digest_id: str) -> dict[str, Any] | None:
     return None
 
 
-def pinned_tasks_message() -> str:
+def pinned_task_rows_for_chat(chat_id: str | int = "") -> list[dict[str, Any]]:
+    chat_key = str(chat_id or "")
     rows = [
         row for row in read_inbox(limit=1_000_000)
         if row.get("type") == "task" and is_open_task_status(row.get("status"))
     ]
+    if chat_key and not chat_key.startswith("-"):
+        rows = [
+            row for row in rows
+            if str(row.get("chat_id") or "") == chat_key or str(row.get("source_chat_id") or "") == chat_key
+        ]
+    return rows
+
+
+def pinned_tasks_message(chat_id: str | int = "") -> str:
+    rows = pinned_task_rows_for_chat(chat_id)
     status_counts: dict[str, int] = {}
     priority_counts: dict[str, int] = {}
     for row in rows:
@@ -4498,7 +4509,7 @@ def pinned_tasks_message() -> str:
     updated = dt.datetime.now().strftime("%d.%m %H:%M")
     if not rows:
         return "\n".join([
-            f"<b>Задачи {BOT_DISPLAY_NAME}</b>",
+            "<b>Задачи из этого чата</b>" if str(chat_id or "") and not str(chat_id).startswith("-") else f"<b>Задачи {BOT_DISPLAY_NAME}</b>",
             "Чисто: открытых задач нет.",
             f"<i>обновлено {escape_html(updated)}</i>",
         ])
@@ -4512,7 +4523,7 @@ def pinned_tasks_message() -> str:
     if priority_counts.get("low"):
         bits.append(f"когда-нибудь: {priority_counts['low']}")
     return "\n".join([
-        f"<b>Задачи {BOT_DISPLAY_NAME}</b>",
+        "<b>Задачи из этого чата</b>" if str(chat_id or "") and not str(chat_id).startswith("-") else f"<b>Задачи {BOT_DISPLAY_NAME}</b>",
         " · ".join(bits),
         "",
         "Кнопки ниже отсортированы: в работе, срочные, обычные, когда-нибудь.",
@@ -4521,8 +4532,12 @@ def pinned_tasks_message() -> str:
     ])
 
 
-def pinned_tasks_keyboard() -> dict[str, Any] | None:
-    return build_task_keyboard(task_rows_for_keyboard(statuses={"open", "pending", "in_progress", "waiting"}, limit=20))
+def pinned_tasks_keyboard(chat_id: str | int = "") -> dict[str, Any] | None:
+    rows = [
+        row for row in pinned_task_rows_for_chat(chat_id)
+        if str(row.get("status") or "open") in {"open", "pending", "in_progress", "waiting"}
+    ]
+    return build_task_keyboard(sort_task_rows(rows)[:20])
 
 
 def get_pinned_task_message_id(chat_id: str | int) -> int | None:
@@ -4551,8 +4566,8 @@ def set_pinned_task_message_id(chat_id: str | int, message_id: int | None) -> No
 def refresh_pinned_tasks(config: AgentConfig, chat_id: str | int, force_create: bool = False) -> dict[str, Any]:
     if not chat_id:
         return {"ok": False, "error": "Нет chat_id"}
-    text = pinned_tasks_message()
-    keyboard = pinned_tasks_keyboard()
+    text = pinned_tasks_message(chat_id)
+    keyboard = pinned_tasks_keyboard(chat_id)
     message_id = get_pinned_task_message_id(chat_id)
     if message_id and not force_create:
         try:
@@ -4609,13 +4624,23 @@ def build_pinned_tasks_result_message(result: dict[str, Any]) -> str:
     return line
 
 
-def maybe_refresh_pinned_tasks(config: AgentConfig, chat_id: str | int, allow_side_effects: bool) -> None:
-    if not allow_side_effects or not chat_id or not get_pinned_task_message_id(chat_id):
+def maybe_refresh_pinned_tasks(config: AgentConfig, chat_id: str | int, allow_side_effects: bool, auto_create: bool = False) -> None:
+    if not allow_side_effects or not chat_id:
+        return
+    if not auto_create and not get_pinned_task_message_id(chat_id):
         return
     try:
-        refresh_pinned_tasks(config, chat_id)
+        refresh_pinned_tasks(config, chat_id, force_create=False)
     except Exception as exc:
         append_log("pinned_task_refresh_error", {"chat_id": chat_id, "error": str(exc)})
+
+
+def should_auto_create_pinned_tasks(chat_id: str | int, meta: dict[str, Any] | None = None) -> bool:
+    if not chat_id or str(chat_id).startswith("-"):
+        return False
+    if meta and meta.get("group_capture"):
+        return False
+    return True
 
 
 def format_task_meta(row: dict[str, Any]) -> str:
@@ -9600,12 +9625,12 @@ def process_text_command(
     if meta.get("force_brain_dialog") and config.brain_enabled:
         result = ask_brain_cli(config, build_reply_brain_text(text, meta), chat_id=chat_id, allow_actions=False)
         if any(item.get("ok") and item.get("type") in {"add_task", "update_task", "set_task_status"} for item in result.get("actions") or []):
-            maybe_refresh_pinned_tasks(config, chat_id, allow_telegram_side_effects)
+            maybe_refresh_pinned_tasks(config, chat_id, allow_telegram_side_effects, auto_create=should_auto_create_pinned_tasks(chat_id, meta))
         return {"digest_id": "BRAIN-REPLY", "answer": build_brain_message(result), "brain_result": result}
     if should_auto_voice_digest(text, meta):
         result = save_voice_digest(config, text, meta, chat_id, message_id)
         if any(item.get("type") == "task" for item in result.get("items", [])):
-            maybe_refresh_pinned_tasks(config, chat_id, allow_telegram_side_effects)
+            maybe_refresh_pinned_tasks(config, chat_id, allow_telegram_side_effects, auto_create=should_auto_create_pinned_tasks(chat_id, meta))
         return result
     digest_id = resolve_digest_id(text)
     if digest_id == "ACCESS-MESSAGE":
@@ -9614,7 +9639,7 @@ def process_text_command(
     if inbox_item and digest_id in (None, "DEFECT-IN"):
         result = save_inbox_item(config, inbox_item, text, meta, chat_id, message_id)
         if inbox_item.get("type") == "task":
-            maybe_refresh_pinned_tasks(config, chat_id, allow_telegram_side_effects)
+            maybe_refresh_pinned_tasks(config, chat_id, allow_telegram_side_effects, auto_create=should_auto_create_pinned_tasks(chat_id, meta))
         return result
 
     digest_id = digest_id or "HELP"
@@ -9880,7 +9905,7 @@ def process_text_command(
         return result
     if digest_id == "TASK-ADD":
         result = add_task_from_command(config, text, meta, chat_id, message_id)
-        maybe_refresh_pinned_tasks(config, chat_id, allow_telegram_side_effects)
+        maybe_refresh_pinned_tasks(config, chat_id, allow_telegram_side_effects, auto_create=should_auto_create_pinned_tasks(chat_id, meta))
         return result
     if digest_id == "TASK-EDIT":
         task_id, rest = extract_edit_payload(text)
