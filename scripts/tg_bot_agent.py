@@ -1478,7 +1478,18 @@ def normalize_transcribed_command(value: str) -> str:
 
 def resolve_digest_id(text: str) -> str | None:
     normalized = strip_bot_command_mention(normalize_text(text))
-    if normalized.startswith(("/business_summary", "/personal_summary", "/личные_чаты", "сводка по личным чатам", "личные чаты")):
+    if normalized.startswith((
+        "/business_summary",
+        "/personal_summary",
+        "/личные_чаты",
+        "сводка по личным чатам",
+        "личные чаты",
+        "личные сообщения",
+        "какие личные сообщения",
+        "какие есть личные сообщения",
+        "что в личных сообщениях",
+        "что по личным сообщениям",
+    )) or ("личн" in normalized and ("сообщ" in normalized or "чат" in normalized)):
         return "BUSINESS-SUMMARY"
     if normalized.startswith((
         "/access ",
@@ -2889,6 +2900,7 @@ def run_self_tests(config: AgentConfig) -> dict[str, Any]:
     checks.append(test_check("access message route", lambda: resolve_digest_id("/access ссылка: https://example.com логин: user пароль: pass") == "ACCESS-MESSAGE"))
     checks.append(test_check("access redaction", lambda: "secret" not in redact_sensitive_text("пароль: secret")))
     checks.append(test_check("groups route", lambda: resolve_digest_id("Какие чаты есть у меня") == "GROUPS"))
+    checks.append(test_check("business summary route", lambda: resolve_digest_id("А какие есть личные сообщения") == "BUSINESS-SUMMARY"))
     checks.append(test_check("send group route", lambda: resolve_digest_id("/send_group -1001 | Дайте статус") == "SEND-GROUP"))
     checks.append(test_check("schedule group route", lambda: resolve_digest_id("/schedule_group -1001 | каждый день в 10:00 | Дайте статус") == "SCHEDULE-GROUP"))
     checks.append(test_check("decision parse", lambda: classify_inbox_text("/decision не меняем схему до сверки", {"kind": "text"}).get("type") == "decision"))
