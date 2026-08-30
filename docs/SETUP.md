@@ -54,7 +54,44 @@ TG_AGENT_PRIORITY_GROUP_CHATS=TG-PP,TG+PP,Опер группа,ОГ
 
 Регулярные сводки считаются по слотам: каждая берёт сообщения после предыдущего выпуска такого же типа и до текущего scheduled-времени. В тексте сводки всегда показывается строка `Период`.
 
-## 2. Дашборд
+## 2. Группа с записями звонков
+
+Бота можно добавить в отдельную группу, куда команда скидывает записи звонков.
+
+Что сделать:
+
+1. Добавить бота в группу с записями.
+2. Отправить в этой группе `/whoami`.
+3. Добавить `chat_id` группы в доступы:
+
+```bash
+TG_AGENT_ALLOWED_CHAT_IDS=-100111,-100222
+```
+
+4. Добавить этот же `chat_id` в список групп, где любые аудио/видео считаются записями звонков:
+
+```bash
+TG_AGENT_CALL_RECORDING_CHAT_IDS=-100111
+```
+
+5. Указать папку хранения. Можно использовать папку Google Drive Desktop:
+
+```bash
+TG_AGENT_CALL_RECORDINGS_DIR=/absolute/path/to/Google Drive/Call recordings
+TG_AGENT_CALL_RECORDING_MAX_MB=200
+```
+
+Что будет делать бот:
+
+- сохранять голосовые, аудио, видео и аудио/видео-документы из этой группы;
+- складывать файлы по датам;
+- писать строку в журнал `data/tg_call_recordings.jsonl`;
+- короткие записи расшифровывать и разбирать на итог, решения, задачи, риски и вопросы;
+- по команде `/call_recordings` показывать последние сохранённые записи.
+
+Если `TG_AGENT_CALL_RECORDING_CHAT_IDS` пустой, бот сохраняет медиа из групп только когда в подписи есть слова `звон`, `созвон`, `call`, `recording` или `запис`.
+
+## 3. Дашборд
 
 Если бот отвечает на вопросы по дашборду, положить JSON-данные в `data/dashboard` или указать путь:
 
@@ -63,7 +100,7 @@ TG_DASHBOARD_DATA_DIR=/absolute/path/to/dashboard/data
 TG_DASHBOARD_BASE_URL=https://example.com/dashboard/
 ```
 
-## 3. ClickUp
+## 4. ClickUp
 
 Заполнить:
 
@@ -81,7 +118,7 @@ CLICKUP_TELEGRAM_USER_MAP=telegram_user_id:clickup_user_id
 CLICKUP_TELEGRAM_USER_MAP=111:cu_1,222:cu_2
 ```
 
-## 4. Brain / Codex
+## 5. Brain / Codex
 
 Если нужен свободный диалог и интерпретация, включить:
 
@@ -92,7 +129,7 @@ TG_AGENT_BRAIN_COMMAND=codex exec --skip-git-repo-check --output-last-message {o
 
 Без brain бот всё равно выполняет шаблонные команды, журнал, дашборд, ClickUp и регулярные сообщения.
 
-## 5. Проверка
+## 6. Проверка
 
 ```bash
 set -a; source .env; set +a

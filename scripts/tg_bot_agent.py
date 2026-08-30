@@ -45,6 +45,8 @@ INBOX_FILE = DATA_DIR / "tg_agent_inbox.jsonl"
 GROUP_MESSAGES_FILE = DATA_DIR / "tg_group_messages.jsonl"
 BUSINESS_MESSAGES_FILE = DATA_DIR / "tg_business_messages.jsonl"
 BUSINESS_CONNECTIONS_FILE = DATA_DIR / "tg_business_connections.jsonl"
+CALL_RECORDINGS_FILE = DATA_DIR / "tg_call_recordings.jsonl"
+CALL_RECORDINGS_DIR = DATA_DIR / "tg_call_recordings"
 REMINDERS_FILE = DATA_DIR / "tg_agent_reminders.jsonl"
 BRAIN_HISTORY_FILE = DATA_DIR / "tg_agent_brain_history.jsonl"
 CHART_DIR = DATA_DIR / "tg_agent_charts"
@@ -67,6 +69,7 @@ CLICKUP_LIST_NAME = os.environ.get("CLICKUP_LIST_NAME", "Main")
 CLICKUP_TELEGRAM_USER_MAP = os.environ.get("CLICKUP_TELEGRAM_USER_MAP", "")
 DEFAULT_PRIORITY_BUSINESS_CHATS = "Мухрим Абдулазизов,Муборак,Мохинул,Абдуазиз"
 DEFAULT_PRIORITY_GROUP_CHATS = "TG-PP,TG+PP,Опер группа,ОГ"
+CALL_RECORDING_EXTENSIONS = {".mp3", ".m4a", ".wav", ".ogg", ".oga", ".opus", ".aac", ".flac", ".mp4", ".mov", ".webm"}
 TG_FLOWERS_WASTE_SPREADSHEET_ID = os.environ.get("TG_FLOWERS_WASTE_SPREADSHEET_ID", "")
 TG_FLOWERS_WASTE_JOURNAL_GID = os.environ.get("TG_FLOWERS_WASTE_JOURNAL_GID", "")
 TG_FLOWERS_WASTE_SUMMARY_GID = os.environ.get("TG_FLOWERS_WASTE_SUMMARY_GID", "")
@@ -167,6 +170,9 @@ COMMANDS: dict[str, str] = {
     "как говорить с ботом": "VOICE-HELP",
     "что говорить боту": "VOICE-HELP",
     "примеры голоса": "VOICE-HELP",
+    "/call_recordings": "CALL-RECORDINGS",
+    "записи звонков": "CALL-RECORDINGS",
+    "последние звонки": "CALL-RECORDINGS",
     "/whoami": "WHOAMI",
     "кто я": "WHOAMI",
     "мой id": "WHOAMI",
@@ -511,6 +517,7 @@ TELEGRAM_BOT_COMMANDS: list[dict[str, str]] = [
     {"command": "standup", "description": "короткий статус для созвона"},
     {"command": "triage", "description": "разложить текст на задачи, вопросы, риски"},
     {"command": "voice_digest", "description": "сохранить голос и разложить пункты"},
+    {"command": "call_recordings", "description": "последние записи звонков"},
     {"command": "review", "description": "обзор изменений за период"},
     {"command": "today", "description": "daily executive summary"},
     {"command": "morning", "description": "статус свежести данных"},
@@ -1742,6 +1749,8 @@ def build_digest_message(config: AgentConfig, digest_id: str, date_arg: str = "l
         return build_triage_preview_message(text="")
     if digest_id == "VOICE-DIGEST":
         return build_voice_digest_preview_message(text="")
+    if digest_id == "CALL-RECORDINGS":
+        return build_call_recordings_message()
     if digest_id == "PERIOD-REVIEW":
         return build_period_review_message()
     if digest_id == "SOURCES":
@@ -3096,6 +3105,80 @@ def append_business_message(message: dict[str, Any]) -> Path:
     with BUSINESS_MESSAGES_FILE.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(message, ensure_ascii=False, sort_keys=True) + "\n")
     return BUSINESS_MESSAGES_FILE
+
+
+def configured_call_recording_chat_ids() -> set[str]:
+    return parse_id_set(os.environ.get("TG_AGENT_CALL_RECORDING_CHAT_IDS", ""))
+
+
+def append_call_recording(row: dict[str, Any]) -> Path:
+    CALL_RECORDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with CALL_RECORDINGS_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    return CALL_RECORDINGS_FILE
+
+
+def read_call_recordings(limit: int = 100) -> list[dict[str, Any]]:
+    if not CALL_RECORDINGS_FILE.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with CALL_RECORDINGS_FILE.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows[-limit:]
+
+
+def call_recording_media(message: dict[str, Any]) -> dict[str, Any]:
+    if message.get("voice"):
+        media = dict(message.get("voice") or {})
+        media["kind"] = "voice"
+        return media
+    if message.get("audio"):
+        media = dict(message.get("audio") or {})
+        media["kind"] = "audio"
+        return media
+    if message.get("video"):
+        media = dict(message.get("video") or {})
+        media["kind"] = "video"
+        return media
+    if message.get("document"):
+        media = dict(message.get("document") or {})
+        filename = str(media.get("file_name") or "")
+        mime_type = str(media.get("mime_type") or "")
+        suffix = Path(filename).suffix.lower()
+        if suffix in CALL_RECORDING_EXTENSIONS or mime_type.startswith(("audio/", "video/")):
+            media["kind"] = "document"
+            return media
+    return {}
+
+
+def is_call_recording_message(message: dict[str, Any], chat_id: str | int = "") -> bool:
+    media = call_recording_media(message)
+    if not media:
+        return False
+    allowed = configured_call_recording_chat_ids()
+    if allowed and str(chat_id) not in allowed:
+        return False
+    caption = normalize_text(str(message.get("caption") or ""))
+    if not allowed and not any(word in caption for word in ("звон", "созвон", "call", "recording", "запис")):
+        return False
+    return True
+
+
+def call_recording_target_dir(message_dt: dt.datetime | None = None) -> Path:
+    day = (message_dt or dt.datetime.now()).date().isoformat()
+    base = Path(os.environ.get("TG_AGENT_CALL_RECORDINGS_DIR") or CALL_RECORDINGS_DIR).expanduser()
+    if not base.is_absolute():
+        base = ROOT / base
+    target = base / day
+    target.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def save_inbox_item(
@@ -8936,11 +9019,12 @@ def file_download_url(config: AgentConfig, file_id: str) -> str:
     return f"https://api.telegram.org/file/bot{token(config)}/{file_path}"
 
 
-def download_telegram_file(config: AgentConfig, file_id: str, target: Path) -> None:
+def download_telegram_file(config: AgentConfig, file_id: str, target: Path, max_mb: int | None = None) -> None:
     url = file_download_url(config, file_id)
+    limit_mb = max_mb if max_mb is not None else config.max_download_mb
     with urllib.request.urlopen(url, timeout=120) as response:
         size = int(response.headers.get("content-length") or 0)
-        if size and size > config.max_download_mb * 1024 * 1024:
+        if size and size > limit_mb * 1024 * 1024:
             raise RuntimeError(f"Telegram file is too large: {size} bytes")
         target.write_bytes(response.read())
 
@@ -8960,6 +9044,150 @@ def store_telegram_file(config: AgentConfig, file_id: str, prefix: str, message_
         return str(target.relative_to(ROOT))
     except ValueError:
         return str(target)
+
+
+def store_call_recording_file(config: AgentConfig, message: dict[str, Any], media: dict[str, Any]) -> str:
+    file_id = str(media.get("file_id") or "")
+    if not file_id:
+        return ""
+    file_path = telegram_file_path(config, file_id)
+    suffix = Path(str(media.get("file_name") or file_path)).suffix or ".bin"
+    safe_kind = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(media.get("kind") or "call")).strip("-") or "call"
+    target = call_recording_target_dir() / f"{safe_kind}-{message.get('message_id') or int(time.time())}-{file_id[:10]}{suffix}"
+    max_mb = int(os.environ.get("TG_AGENT_CALL_RECORDING_MAX_MB") or "200")
+    download_telegram_file(config, file_id, target, max_mb=max_mb)
+    try:
+        return str(target.relative_to(ROOT))
+    except ValueError:
+        return str(target)
+
+
+def analyze_call_transcript(config: AgentConfig, transcript: str, meta: dict[str, Any]) -> str:
+    if not transcript.strip():
+        return ""
+    prompt = "\n\n".join([
+        "Сделай короткий управленческий разбор записи звонка.",
+        TG_MANAGEMENT_ROLE_CONTEXT_RU,
+        TG_COMMUNICATION_STYLE_RU,
+        "Формат строго:",
+        "Итог:",
+        "1-2 предложения.",
+        "",
+        "Решения:",
+        "- только подтвержденные решения; если нет, напиши 'не видно'.",
+        "",
+        "Задачи:",
+        "- ответственный — действие / срок, если есть. Если ответственный неясен, так и напиши.",
+        "",
+        "Риски и вопросы:",
+        "- максимум 3 пункта.",
+        "",
+        f"Чат: {meta.get('chat_title') or meta.get('chat_id') or ''}",
+        f"Автор: {meta.get('username') or meta.get('first_name') or ''}",
+        "Транскрипт:",
+        compact_text(transcript, 12000),
+    ])
+    result = run_brain_prompt(config, prompt, timeout=min(config.brain_timeout, 120))
+    return str(result.get("answer") or "").strip() if result.get("ok") else ""
+
+
+def handle_call_recording_message(config: AgentConfig, message: dict[str, Any], chat: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    media = call_recording_media(message)
+    message_id = message.get("message_id")
+    chat_id = chat.get("id") or ""
+    media_path = store_call_recording_file(config, message, media)
+    transcript = ""
+    analysis = ""
+    status = "saved"
+    error = ""
+    duration = int(media.get("duration") or 0)
+    local_path = local_media_path(media_path) if media_path else Path()
+    if media_path and config.voice_enabled and duration and duration <= config.voice_max_seconds:
+        try:
+            with tempfile.TemporaryDirectory(prefix="tg-call-recording-") as tmp:
+                text_path = Path(tmp) / "call.txt"
+                if config.voice_command:
+                    transcript = run_transcribe_command(config.voice_command, local_path, text_path)
+                else:
+                    transcript = transcribe_with_whisper(config, local_path, Path(tmp))
+            analysis = analyze_call_transcript(config, transcript, {
+                "chat_id": chat_id,
+                "chat_title": chat.get("title") or "",
+                "username": user.get("username") or "",
+                "first_name": user.get("first_name") or "",
+            })
+            status = "analyzed" if analysis else "transcribed"
+        except Exception as exc:
+            status = "saved_transcription_failed"
+            error = str(exc)
+            append_log("call_recording_transcription_error", {"chat_id": chat_id, "message_id": message_id, "error": error})
+    elif duration and duration > config.voice_max_seconds:
+        status = "saved_pending_long_audio"
+    row = {
+        "id": build_inbox_id({"chat_id": chat_id, "message_id": message_id, "media_file_id": media.get("file_id") or ""}),
+        "ts": dt.datetime.now().isoformat(timespec="seconds"),
+        "chat_id": chat_id,
+        "chat_title": chat.get("title") or "",
+        "message_id": message_id,
+        "user_id": user.get("id") or "",
+        "username": user.get("username") or "",
+        "first_name": user.get("first_name") or "",
+        "media_kind": media.get("kind") or "",
+        "file_name": media.get("file_name") or "",
+        "mime_type": media.get("mime_type") or "",
+        "duration": duration,
+        "media_file_id": media.get("file_id") or "",
+        "media_local_path": media_path,
+        "caption": message.get("caption") or "",
+        "status": status,
+        "transcript": transcript,
+        "analysis": analysis,
+        "error": error,
+    }
+    append_call_recording(row)
+    return row
+
+
+def build_call_recording_saved_message(row: dict[str, Any]) -> str:
+    status = str(row.get("status") or "saved")
+    labels = {
+        "saved": "сохранила запись",
+        "transcribed": "сохранила и расшифровала запись",
+        "analyzed": "сохранила, расшифровала и разобрала запись",
+        "saved_pending_long_audio": "сохранила запись; нужна отдельная длинная расшифровка",
+        "saved_transcription_failed": "сохранила запись; расшифровка не прошла",
+    }
+    lines = [
+        f"🎙 <b>Запись звонка: {escape_html(labels.get(status, status))}</b>",
+        f"Чат: {escape_html(str(row.get('chat_title') or row.get('chat_id') or ''))}",
+        f"Файл: <code>{escape_html(str(row.get('media_local_path') or ''))}</code>",
+    ]
+    if row.get("duration"):
+        lines.append(f"Длительность: {escape_html(str(row.get('duration')))} сек.")
+    if row.get("analysis"):
+        lines.extend(["", escape_html(str(row.get("analysis") or ""))])
+    if row.get("error"):
+        lines.append(f"Ошибка расшифровки: {escape_html(str(row.get('error'))[:300])}")
+    return "\n".join(lines)
+
+
+def build_call_recordings_message(limit: int = 8) -> str:
+    rows = list(reversed(read_call_recordings(limit=limit)))
+    if not rows:
+        return "\n".join([
+            "<b>Записи звонков</b>",
+            "Пока пусто.",
+            "Добавьте бота в группу записей и укажите chat_id в TG_AGENT_CALL_RECORDING_CHAT_IDS.",
+        ])
+    lines = ["<b>Последние записи звонков</b>"]
+    for row in rows:
+        stamp = str(row.get("ts") or "")[:16].replace("T", " ")
+        status = str(row.get("status") or "saved")
+        title = str(row.get("chat_title") or row.get("chat_id") or "чат")
+        path = str(row.get("media_local_path") or "")
+        duration = f" / {row.get('duration')} сек." if row.get("duration") else ""
+        lines.append(f"- {escape_html(stamp)} / {escape_html(title)} / {escape_html(status)}{escape_html(duration)}: <code>{escape_html(path)}</code>")
+    return "\n".join(lines)
 
 
 def run_transcribe_command(command: str, audio_path: Path, text_path: Path) -> str:
@@ -9426,6 +9654,21 @@ def handle_update(config: AgentConfig, update: dict[str, Any]) -> None:
         return
     user = message.get("from") or {}
     user_id = user.get("id")
+    raw_text = str(message.get("text") or message.get("caption") or "")
+    if not is_authorized(config, chat_id=chat_id, user_id=user_id) and not is_public_access_command(raw_text):
+        append_log("unauthorized_message", {"chat_id": chat_id, "user_id": user_id, "message_id": message_id, "text": raw_text})
+        if is_group_chat(chat):
+            return
+        telegram_send(config, chat_id, f"Нет доступа к {BOT_DISPLAY_NAME}. Для подключения отправьте /whoami и перешлите ответ администратору.")
+        return
+    if is_group_chat(chat) and is_call_recording_message(message, chat_id):
+        try:
+            row = handle_call_recording_message(config, message, chat, user)
+            telegram_send(config, chat_id, build_call_recording_saved_message(row))
+        except Exception as exc:
+            append_log("call_recording_error", {"chat_id": chat_id, "user_id": user_id, "message_id": message_id, "error": str(exc)})
+            telegram_send(config, chat_id, "Не смогла сохранить запись звонка: " + escape_html(str(exc)[:300]))
+        return
     try:
         text, meta = text_from_message(config, message)
         if not is_authorized(config, chat_id=chat_id, user_id=user_id) and not is_public_access_command(text):
