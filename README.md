@@ -64,3 +64,9 @@ python3 scripts/tg_bot_agent.py --config data/tg_bot_agent.config.example.json r
 - проверить `/health`, `/doctor`, `/self_test`;
 - спросить в Telegram: `что умеешь`, `задачи по мне`, `сводка за день`, `какая выручка за вчера`;
 - проверить, что бот предупреждает о старых данных.
+
+Для передачи Claude / новому разработчику сначала открыть:
+
+```text
+docs/HANDOFF_CLAUDE.md
+```
