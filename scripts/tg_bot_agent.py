@@ -364,6 +364,12 @@ COMMANDS: dict[str, str] = {
     "/groups": "GROUPS",
     "группы": "GROUPS",
     "известные группы": "GROUPS",
+    "чаты": "GROUPS",
+    "известные чаты": "GROUPS",
+    "какие чаты": "GROUPS",
+    "какие группы": "GROUPS",
+    "список чатов": "GROUPS",
+    "список групп": "GROUPS",
     "/send_group": "SEND-GROUP",
     "/send_to_group": "SEND-GROUP",
     "/schedule_group": "SCHEDULE-GROUP",
@@ -2882,6 +2888,7 @@ def run_self_tests(config: AgentConfig) -> dict[str, Any]:
     checks.append(test_check("uzbek waste route", lambda: resolve_digest_id("otkan hafta tg2 da nimalar brak boldi?") == "WASTE-QA"))
     checks.append(test_check("access message route", lambda: resolve_digest_id("/access ссылка: https://example.com логин: user пароль: pass") == "ACCESS-MESSAGE"))
     checks.append(test_check("access redaction", lambda: "secret" not in redact_sensitive_text("пароль: secret")))
+    checks.append(test_check("groups route", lambda: resolve_digest_id("Какие чаты есть у меня") == "GROUPS"))
     checks.append(test_check("send group route", lambda: resolve_digest_id("/send_group -1001 | Дайте статус") == "SEND-GROUP"))
     checks.append(test_check("schedule group route", lambda: resolve_digest_id("/schedule_group -1001 | каждый день в 10:00 | Дайте статус") == "SCHEDULE-GROUP"))
     checks.append(test_check("decision parse", lambda: classify_inbox_text("/decision не меняем схему до сверки", {"kind": "text"}).get("type") == "decision"))
