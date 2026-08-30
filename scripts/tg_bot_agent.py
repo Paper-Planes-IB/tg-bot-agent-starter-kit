@@ -661,8 +661,14 @@ def read_json(path: Path) -> Any:
 
 def load_agent_config(path: Path | None = None) -> AgentConfig:
     raw: dict[str, Any] = {}
-    if path and path.exists():
-        raw = read_json(path)
+    config_path = Path(path).expanduser().resolve() if path else None
+    if config_path and config_path.exists():
+        raw = read_json(config_path)
+    def resolve_runtime_path(value: Any, default: Path) -> Path:
+        candidate = Path(value or default).expanduser()
+        if not candidate.is_absolute():
+            candidate = ROOT / candidate
+        return candidate
     agent = raw.get("agent") or {}
     voice = raw.get("voice") or {}
     sheets = raw.get("sheets") or {}
@@ -672,7 +678,7 @@ def load_agent_config(path: Path | None = None) -> AgentConfig:
     brain_enabled_raw = os.environ.get("TG_AGENT_BRAIN_ENABLED")
     ocr_enabled_raw = os.environ.get("TG_AGENT_OCR_ENABLED")
     return AgentConfig(
-        digest_config=Path(raw.get("digest_config") or DEFAULT_CONFIG),
+        digest_config=resolve_runtime_path(raw.get("digest_config"), DEFAULT_CONFIG),
         token_env=str(agent.get("bot_token_env") or "TG_DASHBOARD_BOT_TOKEN"),
         default_chat_env=str(agent.get("default_chat_id_env") or "TG_DASHBOARD_DRY_RUN_CHAT_ID"),
         allowed_user_ids_env=str(agent.get("allowed_user_ids_env") or "TG_AGENT_ALLOWED_USER_IDS"),
@@ -690,7 +696,7 @@ def load_agent_config(path: Path | None = None) -> AgentConfig:
         sheets_secret_env=str(sheets.get("secret_env") or "TG_AGENT_SHEETS_SECRET"),
         sheets_sync_on_save=bool(sheets.get("sync_on_save", False)),
         media_store_enabled=bool(media.get("store_enabled", True)),
-        media_store_dir=Path(media.get("store_dir") or DATA_DIR / "tg_agent_media"),
+        media_store_dir=resolve_runtime_path(media.get("store_dir"), DATA_DIR / "tg_agent_media"),
         ocr_enabled=(ocr_enabled_raw == "1") if ocr_enabled_raw is not None else bool(ocr.get("enabled", False)),
         ocr_command=str(ocr.get("command") or os.environ.get("TG_AGENT_OCR_COMMAND") or ""),
         ocr_max_mb=int(ocr.get("max_mb") or os.environ.get("TG_AGENT_OCR_MAX_MB") or 10),
@@ -987,6 +993,9 @@ def telegram_action(config: AgentConfig, chat_id: str | int, action: str) -> Non
 
 def telegram_react(config: AgentConfig, chat_id: str | int, message_id: int | None, emoji: str) -> None:
     if not message_id:
+        return
+    enabled = os.environ.get("TG_AGENT_REACTIONS_ENABLED", "0").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
         return
     try:
         telegram_request(config, "setMessageReaction", {
@@ -2983,8 +2992,16 @@ def active_business_connection_owners() -> dict[str, str]:
     return owners
 
 
+def configured_allowed_business_connection_ids() -> set[str]:
+    raw = os.environ.get("TG_AGENT_ALLOWED_BUSINESS_CONNECTION_IDS", "")
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
 def business_connection_allowed(config: AgentConfig, connection_id: str) -> bool:
-    owner_id = active_business_connection_owners().get(str(connection_id) or "")
+    connection_id = str(connection_id) or ""
+    if connection_id in configured_allowed_business_connection_ids():
+        return True
+    owner_id = active_business_connection_owners().get(connection_id)
     if not owner_id:
         return False
     allowed_users = configured_allowed_user_ids(config)
@@ -9869,6 +9886,8 @@ def cli() -> int:
             "WAITING-FOLLOWUPS",
             "NUDGES",
             "QUESTION-ANSWER",
+            "DASHBOARD-QA",
+            "DASHBOARD-CHART",
         } or (digest_id and digest_id.startswith("TASK-") and digest_id != "TASK-ADD"):
             print(process_text_command(config, args.text, {"kind": "text"}, chat_id="preview")["answer"])
         elif inbox_item and digest_id in (None, "DEFECT-IN"):

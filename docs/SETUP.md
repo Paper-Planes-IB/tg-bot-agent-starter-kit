@@ -20,6 +20,20 @@ TG_AGENT_ALLOWED_USER_IDS=111,222,333
 TG_AGENT_ALLOWED_CHAT_IDS=-100111,-100222
 ```
 
+Для Telegram Business / автоматизации личных чатов:
+
+```bash
+TG_AGENT_ALLOWED_BUSINESS_CONNECTION_IDS=...
+```
+
+`business_connection_id` берётся из логов после подключения бота в настройках Telegram Business. Пока это поле не заполнено, бот может видеть событие, но не будет сохранять сообщения из личных чатов.
+
+Реакции Telegram лучше держать выключенными, если нет отдельной причины их включать:
+
+```bash
+TG_AGENT_REACTIONS_ENABLED=0
+```
+
 ## 2. Дашборд
 
 Если бот отвечает на вопросы по дашборду, положить JSON-данные в `data/dashboard` или указать путь:
