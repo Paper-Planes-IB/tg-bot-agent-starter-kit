@@ -7406,6 +7406,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
             "Xabarlarni ketma-ket qayta aytma. Ularni mavzularga birlashtir va har bir mavzuning boshqaruv ma'nosini yoz.",
             "Agar xabarlarda emotsiya, shubha, va'dadan keyin jimlik, konflikt, risk yoki yashirin topshiriq bo'lsa, buni alohida ko'rsat.",
             "O'zbek tilida yoz. Matn aniq, jonli va ishga yaroqli bo'lsin. Markdown jadval ishlatma.",
+            "Bo'lim nomlarini aynan shunday yoz, emojisiz: Kun yakuni, Nima haqida gaplashishdi, Nima hal qilindi, Nima to'xtab qoldi, Kimga yozish kerak.",
             "Har bir mazmunli bandda manbaga kvadrat qavs bilan havola ber, masalan [2].",
             "Fakt, mas'ul yoki qarorni o'ylab topma. Faqat ishora bo'lsa, 'shekilli' yoki 'aniqlashtirish kerak' deb yoz.",
             "",
@@ -7435,6 +7436,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Не пересказывай сообщения по порядку. Сгруппируй их в темы и назови управленческий смысл каждой темы.",
         "Если в сообщениях есть эмоции, сомнения, тишина после обещания, конфликт, риск или скрытое поручение, явно вытащи это в вывод.",
         "Пиши по-русски, живо и конкретно. Без markdown-таблиц, без канцелярита, без рекламного тона.",
+        "Названия разделов пиши ровно так, без эмоджи: Итог дня, О чём говорили, Что решили, Что зависло, Кого пинговать.",
         "Каждый содержательный пункт должен ссылаться на источник в квадратных скобках, например [2].",
         "Не выдумывай факты, ответственных и решения. Если есть только намёк, пиши 'похоже' или 'нужно уточнить'.",
         "",
@@ -7464,6 +7466,27 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
     return ""
 
 
+def format_summary_html(summary: str, use_uzbek: bool) -> str:
+    escaped = escape_html(summary.strip())
+    replacements = {
+        "Kun yakuni:": "🧭 <b>Kun yakuni</b>",
+        "Nima haqida gaplashishdi:": "💬 <b>Nima haqida gaplashishdi</b>",
+        "Nima hal qilindi:": "✅ <b>Nima hal qilindi</b>",
+        "Nima to&#x27;xtab qoldi:": "⚠️ <b>Nima to&#x27;xtab qoldi</b>",
+        "Kimga yozish kerak:": "👤 <b>Kimga yozish kerak</b>",
+    } if use_uzbek else {
+        "Итог дня:": "🧭 <b>Итог дня</b>",
+        "О чём говорили:": "💬 <b>О чём говорили</b>",
+        "Что решили:": "✅ <b>Что решили</b>",
+        "Что зависло:": "⚠️ <b>Что зависло</b>",
+        "Кого пинговать:": "👤 <b>Кого пинговать</b>",
+    }
+    for source, target in replacements.items():
+        escaped = escaped.replace(source, target)
+    escaped = re.sub(r"\n{2,}", "\n\n━━━━━━━━━━━━\n\n", escaped)
+    return escaped
+
+
 def build_group_important_message(config: AgentConfig, days: int = 1, limit: int = 10) -> str:
     days = max(1, min(30, int(days)))
     today_date = dt.date.today()
@@ -7482,24 +7505,25 @@ def build_group_important_message(config: AgentConfig, days: int = 1, limit: int
     else:
         title = f"Важное во внешних чатах за {today_date.isoformat()}" if days == 1 else f"Важное во внешних чатах за {start_date.isoformat()} - {today_date.isoformat()}"
     lines = [
-        f"<b>{escape_html(title)}</b>",
-        f"{'Ulangan chatlardagi xabarlar' if use_uzbek else 'Сообщений в подключенных чатах'}: {len(rows)}",
-        f"{'Muhim deb ajratilgan' if use_uzbek else 'Захвачено как важное'}: {len(captured)}",
+        f"📌 <b>{escape_html(title)}</b>",
+        "━━━━━━━━━━━━",
+        f"📨 {'Ulangan chatlardagi xabarlar' if use_uzbek else 'Сообщений в подключенных чатах'}: <b>{len(rows)}</b>",
+        f"⭐ {'Muhim deb ajratilgan' if use_uzbek else 'Захвачено как важное'}: <b>{len(captured)}</b>",
     ]
     if not rows:
         lines.extend(["", "Bu davrda tashqi chatlardan saqlangan xabarlar yo'q." if use_uzbek else "За период нет сохраненных сообщений из внешних чатов."])
         return "\n".join(lines)
     chat_line = priority_chat_counts(rows, group_priority_terms, limit=5)
-    lines.extend(["", f"{'Chatlar' if use_uzbek else 'Чаты'}: {escape_html(chat_line)}"])
+    lines.extend(["", f"📍 <b>{'Chatlar' if use_uzbek else 'Чаты'}</b>: {escape_html(chat_line)}"])
     summary = summarize_group_messages(config, selected_rows)
     if summary:
-        lines.extend(["", escape_html(summary)])
+        lines.extend(["", format_summary_html(summary, use_uzbek)])
     else:
         lines.extend(["", "Asosiy fikrlar:" if use_uzbek else "Ключевые идеи:"])
         for idx, row in enumerate(selected_rows, start=1):
             text = compact_text(str(row.get("text") or ""), 220)
             lines.append(f"- [{idx}] {escape_html(text)}")
-    lines.extend(["", f"<b>{'Manbalar' if use_uzbek else 'Источники'}</b>"])
+    lines.extend(["", "━━━━━━━━━━━━", f"🔎 <b>{'Manbalar' if use_uzbek else 'Источники'}</b>"])
     chat_links: dict[str, str] = {}
     for idx, row in enumerate(selected_rows, start=1):
         reason = clean_capture_reason(str(row.get("capture_reason") or ""))
@@ -7587,8 +7611,9 @@ def build_business_summary_message(config: AgentConfig, days: int = 1, limit: in
     else:
         title = f"Личные business-чаты за {today_date.isoformat()}" if days == 1 else f"Личные business-чаты за {start_date.isoformat()} - {today_date.isoformat()}"
     lines = [
-        f"<b>{escape_html(title)}</b>",
-        f"{'Xabarlar' if use_uzbek else 'Сообщений'}: {len(rows)}",
+        f"📌 <b>{escape_html(title)}</b>",
+        "━━━━━━━━━━━━",
+        f"📨 {'Xabarlar' if use_uzbek else 'Сообщений'}: <b>{len(rows)}</b>",
     ]
     if not rows:
         lines.extend([
@@ -7598,16 +7623,16 @@ def build_business_summary_message(config: AgentConfig, days: int = 1, limit: in
         ])
         return "\n".join(lines)
     chat_line = priority_chat_counts(rows, business_priority_terms, limit=8)
-    lines.extend(["", f"{'Chatlar' if use_uzbek else 'Чаты'}: {escape_html(chat_line)}"])
+    lines.extend(["", f"📍 <b>{'Chatlar' if use_uzbek else 'Чаты'}</b>: {escape_html(chat_line)}"])
     summary = summarize_group_messages(config, selected_rows)
     if summary:
-        lines.extend(["", escape_html(summary)])
+        lines.extend(["", format_summary_html(summary, use_uzbek)])
     else:
         lines.extend(["", "Asosiy xabarlar:" if use_uzbek else "Ключевые сообщения:"])
         for idx, row in enumerate(selected_rows, start=1):
             text = compact_text(str(row.get("text") or ""), 220)
             lines.append(f"- [{idx}] {escape_html(text)}")
-    lines.extend(["", f"<b>{'Manbalar' if use_uzbek else 'Источники'}</b>"])
+    lines.extend(["", "━━━━━━━━━━━━", f"🔎 <b>{'Manbalar' if use_uzbek else 'Источники'}</b>"])
     for idx, row in enumerate(selected_rows, start=1):
         event = str(row.get("event") or "business_message")
         text = compact_text(str(row.get("text") or ""), 90)
