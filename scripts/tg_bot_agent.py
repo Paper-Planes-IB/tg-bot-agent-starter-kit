@@ -1415,6 +1415,15 @@ def detect_text_language(value: str) -> str:
         "boldi",
         "bo'ldi",
         "buldi",
+        "булди",
+        "неч",
+        "пул",
+        "килди",
+        "килдия",
+        "шетт",
+        "шеттам",
+        "ассалому",
+        "алайкум",
         "utgan",
         "утган",
         "хоз",
@@ -1444,6 +1453,19 @@ def detect_text_language(value: str) -> str:
         "akaga",
         "qilin",
         "qiling",
+        "kim",
+        "ishta",
+        "assalom",
+        "alaykum",
+        "voalaykom",
+        "qarain",
+        "qiram",
+        "bilan",
+        "shetta",
+        "shettamila",
+        "pul",
+        "nech",
+        "qildi",
         "hammasini",
         "korin",
         "yoq",
@@ -2942,6 +2964,7 @@ def run_self_tests(config: AgentConfig) -> dict[str, Any]:
     checks.append(test_check("access redaction", lambda: "secret" not in redact_sensitive_text("пароль: secret")))
     checks.append(test_check("groups route", lambda: resolve_digest_id("Какие чаты есть у меня") == "GROUPS"))
     checks.append(test_check("business summary route", lambda: resolve_digest_id("А какие есть личные сообщения") == "BUSINESS-SUMMARY"))
+    checks.append(test_check("uzbek summary language", lambda: rows_contain_uzbek([{"text": "ertaga Flowers savdosini tekshirish kerak"}])))
     checks.append(test_check("send group route", lambda: resolve_digest_id("/send_group -1001 | Дайте статус") == "SEND-GROUP"))
     checks.append(test_check("schedule group route", lambda: resolve_digest_id("/schedule_group -1001 | каждый день в 10:00 | Дайте статус") == "SCHEDULE-GROUP"))
     checks.append(test_check("decision parse", lambda: classify_inbox_text("/decision не меняем схему до сверки", {"kind": "text"}).get("type") == "decision"))
@@ -7366,7 +7389,7 @@ def run_brain_prompt(config: AgentConfig, prompt_text: str, timeout: int | None 
 
 def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) -> str:
     uz_count = sum(1 for row in rows if detect_text_language(str(row.get("text") or "")) == "uz")
-    use_uzbek = bool(rows) and uz_count >= max(1, len(rows) // 2)
+    use_uzbek = uz_count > 0
     chunks = []
     for idx, row in enumerate(rows, start=1):
         text = compact_text(str(row.get("text") or ""), 900)
@@ -7453,7 +7476,7 @@ def build_group_important_message(config: AgentConfig, days: int = 1, limit: int
     group_priority_terms = priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
     source_rows = captured or rows
     selected_rows = priority_sorted_rows(source_rows, group_priority_terms)[:limit]
-    use_uzbek = rows_are_mostly_uzbek(selected_rows)
+    use_uzbek = rows_contain_uzbek(selected_rows)
     if use_uzbek:
         title = f"Tashqi chatlardagi muhim xabarlar: {today_date.isoformat()}" if days == 1 else f"Tashqi chatlardagi muhim xabarlar: {start_date.isoformat()} - {today_date.isoformat()}"
     else:
@@ -7489,9 +7512,8 @@ def build_group_important_message(config: AgentConfig, days: int = 1, limit: int
     return "\n".join(lines)
 
 
-def rows_are_mostly_uzbek(rows: list[dict[str, Any]]) -> bool:
-    uz_count = sum(1 for row in rows if detect_text_language(str(row.get("text") or "")) == "uz")
-    return bool(rows) and uz_count >= max(1, len(rows) // 2)
+def rows_contain_uzbek(rows: list[dict[str, Any]]) -> bool:
+    return any(detect_text_language(str(row.get("text") or "")) == "uz" for row in rows)
 
 
 
@@ -7559,7 +7581,7 @@ def build_business_summary_message(config: AgentConfig, days: int = 1, limit: in
     ]
     business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
     selected_rows = priority_sorted_rows(rows, business_priority_terms)[:limit]
-    use_uzbek = rows_are_mostly_uzbek(selected_rows)
+    use_uzbek = rows_contain_uzbek(selected_rows)
     if use_uzbek:
         title = f"Shaxsiy business-chatlar: {today_date.isoformat()}" if days == 1 else f"Shaxsiy business-chatlar: {start_date.isoformat()} - {today_date.isoformat()}"
     else:
