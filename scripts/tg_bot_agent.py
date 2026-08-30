@@ -1417,6 +1417,44 @@ def detect_text_language(value: str) -> str:
         "buldi",
         "utgan",
         "утган",
+        "хоз",
+        "хоп",
+        "йок",
+        "йук",
+        "йўқ",
+        "екан",
+        "екди",
+        "борми",
+        "тайор",
+        "қара",
+        "кара",
+        "карап",
+        "корин",
+        "кўрин",
+        "хаммаси",
+        "хаммасини",
+        "бериш",
+        "беришвоти",
+        "берган",
+        "жовоб",
+        "жавоб",
+        "тел килин",
+        "тел қилинг",
+        "ака",
+        "akaga",
+        "qilin",
+        "qiling",
+        "hammasini",
+        "korin",
+        "yoq",
+        "bor",
+        "bormi",
+        "tayor",
+        "qarab",
+        "berish",
+        "bergan",
+        "jovob",
+        "javob",
         "brak",
     }
     if any(marker in normalized for marker in uz_markers):
@@ -2898,6 +2936,7 @@ def run_self_tests(config: AgentConfig) -> dict[str, Any]:
     checks.append(test_check("stats route", lambda: "Статистика TG Agent" in build_digest_message(config, "STATS")))
     checks.append(test_check("task parse", lambda: classify_inbox_text("задача ecom срочно для Мухассар до завтра проверить чеки", {"kind": "text"}).get("priority") == "high"))
     checks.append(test_check("defect parse", lambda: classify_inbox_text("брак nour 12 стеблей на 450 000 сум", {"kind": "text"}).get("amount") == 450000))
+    checks.append(test_check("uzbek language detect", lambda: detect_text_language("ertaga Flowers savdosini tekshirish kerak") == "uz"))
     checks.append(test_check("uzbek waste route", lambda: resolve_digest_id("otkan hafta tg2 da nimalar brak boldi?") == "WASTE-QA"))
     checks.append(test_check("access message route", lambda: resolve_digest_id("/access ссылка: https://example.com логин: user пароль: pass") == "ACCESS-MESSAGE"))
     checks.append(test_check("access redaction", lambda: "secret" not in redact_sensitive_text("пароль: secret")))
@@ -7326,6 +7365,8 @@ def run_brain_prompt(config: AgentConfig, prompt_text: str, timeout: int | None 
 
 
 def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) -> str:
+    uz_count = sum(1 for row in rows if detect_text_language(str(row.get("text") or "")) == "uz")
+    use_uzbek = bool(rows) and uz_count >= max(1, len(rows) // 2)
     chunks = []
     for idx, row in enumerate(rows, start=1):
         text = compact_text(str(row.get("text") or ""), 900)
@@ -7335,7 +7376,37 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         chunks.append(
             f"[{idx}] {row.get('ts') or ''} / {chat_title} / @{author} / {reason}\n{text}"
         )
-    prompt = "\n\n".join([
+    if use_uzbek:
+        prompt = "\n\n".join([
+            "Telegram chatlaridagi xabarlar bo'yicha interpretatsion boshqaruv xulosasini tuz.",
+            "Maqsad: Fathullo yoki rahbar 40 soniyada nima bo'lganini, nima hal qilinganini, nima to'xtab qolganini va kimga yozish kerakligini tushunsin.",
+            "Xabarlarni ketma-ket qayta aytma. Ularni mavzularga birlashtir va har bir mavzuning boshqaruv ma'nosini yoz.",
+            "Agar xabarlarda emotsiya, shubha, va'dadan keyin jimlik, konflikt, risk yoki yashirin topshiriq bo'lsa, buni alohida ko'rsat.",
+            "O'zbek tilida yoz. Matn aniq, jonli va ishga yaroqli bo'lsin. Markdown jadval ishlatma.",
+            "Har bir mazmunli bandda manbaga kvadrat qavs bilan havola ber, masalan [2].",
+            "Fakt, mas'ul yoki qarorni o'ylab topma. Faqat ishora bo'lsa, 'shekilli' yoki 'aniqlashtirish kerak' deb yoz.",
+            "",
+            "Javob strukturasi qat'iy:",
+            "Kun yakuni:",
+            "1 qisqa abzas: muhokamalarning asosiy ma'nosi, 2 gapdan oshmasin.",
+            "",
+            "Nima haqida gaplashishdi:",
+            "- 2-5 mavzu. Format: 'Mavzu — boshqaruv ma'nosi, nima bo'ldi va nima uchun muhim [manba]'.",
+            "",
+            "Nima hal qilindi:",
+            "- faqat tasdiqlangan qarorlar. Qaror bo'lmasa: 'Tasdiqlangan qaror ko'rinmayapti.'",
+            "",
+            "Nima to'xtab qoldi:",
+            "- javobsiz savollar, keyingi qadamsiz va'dalar, kelishuvdan keyingi jimlik, mas'ullar bilan risklar. Hech narsa bo'lmasa: 'Aniq to'xtab qolgan masala ko'rinmayapti.'",
+            "",
+            "Kimga yozish kerak:",
+            "- ism/rol — nima uchun yozish kerak. Xabarlardan aniq bo'lmasa: 'Mas'ulni qo'lda tanlash kerak.'",
+            "",
+            "Xabarlar:",
+            "\n\n".join(chunks),
+        ])
+    else:
+        prompt = "\n\n".join([
         "Сделай интерпретированную управленческую сводку по сообщениям из внешних Telegram-чатов.",
         "Цель: Наталья должна за 40 секунд понять, что произошло, что решено, где зависло и кого пинговать.",
         "Не пересказывай сообщения по порядку. Сгруппируй их в темы и назови управленческий смысл каждой темы.",
@@ -7362,7 +7433,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "",
         "Сообщения:",
         "\n\n".join(chunks),
-    ])
+        ])
     result = run_brain_prompt(config, prompt, timeout=min(config.brain_timeout, 90))
     if result.get("ok"):
         return str(result.get("answer") or "").strip()
@@ -7379,37 +7450,48 @@ def build_group_important_message(config: AgentConfig, days: int = 1, limit: int
         if (row_date := group_message_date(row)) and start_date <= row_date <= today_date
     ]
     captured = [row for row in rows if str(row.get("capture_reason") or "").strip()]
-    title = f"Важное во внешних чатах за {today_date.isoformat()}" if days == 1 else f"Важное во внешних чатах за {start_date.isoformat()} - {today_date.isoformat()}"
-    lines = [
-        f"<b>{escape_html(title)}</b>",
-        f"Сообщений в подключенных чатах: {len(rows)}",
-        f"Захвачено как важное: {len(captured)}",
-    ]
-    if not rows:
-        lines.extend(["", "За период нет сохраненных сообщений из внешних чатов."])
-        return "\n".join(lines)
     group_priority_terms = priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
-    chat_line = priority_chat_counts(rows, group_priority_terms, limit=5)
-    lines.extend(["", f"Чаты: {escape_html(chat_line)}"])
     source_rows = captured or rows
     selected_rows = priority_sorted_rows(source_rows, group_priority_terms)[:limit]
+    use_uzbek = rows_are_mostly_uzbek(selected_rows)
+    if use_uzbek:
+        title = f"Tashqi chatlardagi muhim xabarlar: {today_date.isoformat()}" if days == 1 else f"Tashqi chatlardagi muhim xabarlar: {start_date.isoformat()} - {today_date.isoformat()}"
+    else:
+        title = f"Важное во внешних чатах за {today_date.isoformat()}" if days == 1 else f"Важное во внешних чатах за {start_date.isoformat()} - {today_date.isoformat()}"
+    lines = [
+        f"<b>{escape_html(title)}</b>",
+        f"{'Ulangan chatlardagi xabarlar' if use_uzbek else 'Сообщений в подключенных чатах'}: {len(rows)}",
+        f"{'Muhim deb ajratilgan' if use_uzbek else 'Захвачено как важное'}: {len(captured)}",
+    ]
+    if not rows:
+        lines.extend(["", "Bu davrda tashqi chatlardan saqlangan xabarlar yo'q." if use_uzbek else "За период нет сохраненных сообщений из внешних чатов."])
+        return "\n".join(lines)
+    chat_line = priority_chat_counts(rows, group_priority_terms, limit=5)
+    lines.extend(["", f"{'Chatlar' if use_uzbek else 'Чаты'}: {escape_html(chat_line)}"])
     summary = summarize_group_messages(config, selected_rows)
     if summary:
         lines.extend(["", escape_html(summary)])
     else:
-        lines.extend(["", "Ключевые идеи:"])
+        lines.extend(["", "Asosiy fikrlar:" if use_uzbek else "Ключевые идеи:"])
         for idx, row in enumerate(selected_rows, start=1):
             text = compact_text(str(row.get("text") or ""), 220)
             lines.append(f"- [{idx}] {escape_html(text)}")
-    lines.extend(["", "<b>Источники</b>"])
+    lines.extend(["", f"<b>{'Manbalar' if use_uzbek else 'Источники'}</b>"])
     chat_links: dict[str, str] = {}
     for idx, row in enumerate(selected_rows, start=1):
         reason = clean_capture_reason(str(row.get("capture_reason") or ""))
         text = compact_text(str(row.get("text") or ""), 90)
         lines.append(f"- {group_message_source_label(config, row, idx, chat_links)} / {escape_html(reason)}: {escape_html(text)}")
     if len(source_rows) > limit:
-        lines.append(f"Показано {limit} из {len(source_rows)}.")
+        shown_word = "Ko'rsatilgan" if use_uzbek else "Показано"
+        shown_sep = "dan" if use_uzbek else "из"
+        lines.append(f"{shown_word} {limit} {shown_sep} {len(source_rows)}.")
     return "\n".join(lines)
+
+
+def rows_are_mostly_uzbek(rows: list[dict[str, Any]]) -> bool:
+    uz_count = sum(1 for row in rows if detect_text_language(str(row.get("text") or "")) == "uz")
+    return bool(rows) and uz_count >= max(1, len(rows) // 2)
 
 
 
@@ -7475,37 +7557,43 @@ def build_business_summary_message(config: AgentConfig, days: int = 1, limit: in
         row for row in read_business_messages()
         if (row_date := business_message_date(row)) and start_date <= row_date <= today_date
     ]
-    title = f"Личные business-чаты за {today_date.isoformat()}" if days == 1 else f"Личные business-чаты за {start_date.isoformat()} - {today_date.isoformat()}"
+    business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
+    selected_rows = priority_sorted_rows(rows, business_priority_terms)[:limit]
+    use_uzbek = rows_are_mostly_uzbek(selected_rows)
+    if use_uzbek:
+        title = f"Shaxsiy business-chatlar: {today_date.isoformat()}" if days == 1 else f"Shaxsiy business-chatlar: {start_date.isoformat()} - {today_date.isoformat()}"
+    else:
+        title = f"Личные business-чаты за {today_date.isoformat()}" if days == 1 else f"Личные business-чаты за {start_date.isoformat()} - {today_date.isoformat()}"
     lines = [
         f"<b>{escape_html(title)}</b>",
-        f"Сообщений: {len(rows)}",
+        f"{'Xabarlar' if use_uzbek else 'Сообщений'}: {len(rows)}",
     ]
     if not rows:
         lines.extend([
             "",
-            "Новых сообщений из Telegram Business пока нет.",
-            "Если Фатхулло уже подключил автоматизацию, проверьте Secretary Mode в BotFather и права чтения сообщений в Telegram Business.",
+            "Telegram Business'dan yangi xabarlar hali yo'q." if use_uzbek else "Новых сообщений из Telegram Business пока нет.",
+            "Agar Fathullo avtomatizatsiyani ulagan bo'lsa, BotFather'dagi Secretary Mode va Telegram Business'dagi xabarlarni o'qish huquqini tekshiring." if use_uzbek else "Если Фатхулло уже подключил автоматизацию, проверьте Secretary Mode в BotFather и права чтения сообщений в Telegram Business.",
         ])
         return "\n".join(lines)
-    business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
     chat_line = priority_chat_counts(rows, business_priority_terms, limit=8)
-    lines.extend(["", f"Чаты: {escape_html(chat_line)}"])
-    selected_rows = priority_sorted_rows(rows, business_priority_terms)[:limit]
+    lines.extend(["", f"{'Chatlar' if use_uzbek else 'Чаты'}: {escape_html(chat_line)}"])
     summary = summarize_group_messages(config, selected_rows)
     if summary:
         lines.extend(["", escape_html(summary)])
     else:
-        lines.extend(["", "Ключевые сообщения:"])
+        lines.extend(["", "Asosiy xabarlar:" if use_uzbek else "Ключевые сообщения:"])
         for idx, row in enumerate(selected_rows, start=1):
             text = compact_text(str(row.get("text") or ""), 220)
             lines.append(f"- [{idx}] {escape_html(text)}")
-    lines.extend(["", "<b>Источники</b>"])
+    lines.extend(["", f"<b>{'Manbalar' if use_uzbek else 'Источники'}</b>"])
     for idx, row in enumerate(selected_rows, start=1):
         event = str(row.get("event") or "business_message")
         text = compact_text(str(row.get("text") or ""), 90)
         lines.append(f"- {business_message_source_label(row, idx)} / {escape_html(event)}: {escape_html(text)}")
     if len(rows) > limit:
-        lines.append(f"Показано {limit} из {len(rows)}.")
+        shown_word = "Ko'rsatilgan" if use_uzbek else "Показано"
+        shown_sep = "dan" if use_uzbek else "из"
+        lines.append(f"{shown_word} {limit} {shown_sep} {len(rows)}.")
     return "\n".join(lines)
 
 
