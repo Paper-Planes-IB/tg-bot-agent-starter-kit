@@ -8419,11 +8419,150 @@ def clickup_task_source_label() -> str:
     return f"workspace {clickup_team_id()}"
 
 
+@dataclasses.dataclass
+class ClickUpTaskQuery:
+    status_names: list[str]
+    include_closed: bool
+    assignee_ids: list[str]
+    assignee_query: str
+    start_dt: dt.datetime | None
+    end_dt: dt.datetime | None
+    period_label: str
+    date_field: str
+    order_by: str
+    reverse: bool
+    scope_label: str
+
+
+def clickup_date_field_from_text(text: str, default: str = "due") -> str:
+    normalized = normalize_text(text)
+    if any(marker in normalized for marker in ("закрыт", "выполн", "сделан", "date closed", "date done", "done")):
+        return "done"
+    if any(marker in normalized for marker in ("обнов", "updated", "измен")):
+        return "updated"
+    if any(marker in normalized for marker in ("создан", "created")):
+        return "created"
+    if any(marker in normalized for marker in ("дедлайн", "срок", "due")):
+        return "due"
+    return default
+
+
+def clickup_order_from_text(text: str, date_field: str) -> tuple[str, bool]:
+    normalized = normalize_text(text)
+    if any(marker in normalized for marker in ("последн", "сначала новые", "новые", "recent")):
+        return ("updated" if date_field == "updated" else "created", True)
+    if any(marker in normalized for marker in ("старые", "сначала старые")):
+        return ("created", False)
+    if date_field == "updated":
+        return "updated", True
+    if date_field == "created":
+        return "created", True
+    return "due_date", False
+
+
+def clickup_statuses_from_text(text: str) -> tuple[list[str], bool, str]:
+    normalized = normalize_text(text)
+    if any(marker in normalized for marker in ("по всем статус", "все статусы", "любые статусы", "all statuses")):
+        return [], True, "все статусы"
+    if any(marker in normalized for marker in ("выполн", "закрыт", "сделан", "готов", "done", "closed", "yop")):
+        return ["выполнено"], True, "выполнено"
+    if any(marker in normalized for marker in ("в процессе", "процессе", "работе", "doing", "progress")):
+        return ["в процессе"], False, "в процессе"
+    if any(marker in normalized for marker in ("бэклог", "backlog")):
+        return ["бэклог"], False, "бэклог"
+    if any(marker in normalized for marker in ("открыт", "активн", "задачи", "open")):
+        return ["задачи", "в процессе", "бэклог"], False, "открытые"
+    return [], False, "открытые"
+
+
+def clickup_task_query(text: str, telegram_user_id: str | int | None = None, *, done_mode: bool = False) -> ClickUpTaskQuery:
+    start_dt, end_dt, period_label = clickup_query_period(text)
+    status_names, include_closed, status_label = clickup_statuses_from_text(text)
+    if done_mode:
+        status_names, include_closed, status_label = ["выполнено"], True, "выполнено"
+    assignee_ids: list[str] = []
+    if clickup_is_my_tasks_query(text) or (done_mode and " я " in f" {normalize_text(text)} "):
+        clickup_id = clickup_user_id_for_telegram(telegram_user_id)
+        if clickup_id:
+            assignee_ids = [clickup_id]
+    assignee_query = clickup_assignee_query(text)
+    date_field = clickup_date_field_from_text(text, default="done" if done_mode else "due")
+    order_by, reverse = clickup_order_from_text(text, date_field)
+    if clickup_is_my_tasks_query(text):
+        scope_label = "по мне"
+    elif assignee_query:
+        scope_label = f"для {assignee_query}"
+    else:
+        scope_label = "по всем"
+    return ClickUpTaskQuery(
+        status_names=status_names,
+        include_closed=include_closed,
+        assignee_ids=assignee_ids,
+        assignee_query=assignee_query,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        period_label=period_label,
+        date_field=date_field,
+        order_by=order_by,
+        reverse=reverse,
+        scope_label=f"{scope_label}, {status_label}",
+    )
+
+
+def clickup_date_param_names(date_field: str) -> tuple[str, str] | None:
+    if date_field == "done":
+        return "date_done_gt", "date_done_lt"
+    if date_field == "updated":
+        return "date_updated_gt", "date_updated_lt"
+    if date_field == "created":
+        return "date_created_gt", "date_created_lt"
+    if date_field == "due":
+        return "due_date_gt", "due_date_lt"
+    return None
+
+
+def clickup_datetime_for_field(task: dict[str, Any], date_field: str) -> dt.datetime | None:
+    if date_field == "done":
+        return clickup_task_closed_datetime(task)
+    if date_field == "updated":
+        return clickup_ms_to_datetime(task.get("date_updated"))
+    if date_field == "created":
+        return clickup_ms_to_datetime(task.get("date_created"))
+    if date_field == "due":
+        return clickup_ms_to_datetime(task.get("due_date"))
+    return None
+
+
+def clickup_extra_params(query: ClickUpTaskQuery) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    if query.status_names:
+        params["statuses[]"] = query.status_names
+    if query.start_dt and query.end_dt:
+        names = clickup_date_param_names(query.date_field)
+        if names:
+            params[names[0]] = int(query.start_dt.timestamp() * 1000)
+            params[names[1]] = int(query.end_dt.timestamp() * 1000)
+    return params
+
+
+def clickup_period_text(query: ClickUpTaskQuery) -> str:
+    if query.start_dt and query.end_dt:
+        end_date = query.end_dt.date()
+        if query.end_dt.time() == dt.time.min:
+            end_date = (query.end_dt - dt.timedelta(days=1)).date()
+        return f"Период: {query.start_dt.date().isoformat()} — {end_date.isoformat()}"
+    if query.period_label:
+        return f"Период: {query.period_label}"
+    return ""
+
+
 def fetch_clickup_tasks(
     limit: int = 12,
     include_closed: bool = False,
     assignee_ids: list[str] | None = None,
     extra_params: dict[str, Any] | None = None,
+    order_by: str = "due_date",
+    reverse: bool = False,
 ) -> list[dict[str, Any]]:
     team_id = clickup_team_id()
     list_id = clickup_target_list_id()
@@ -8436,8 +8575,8 @@ def fetch_clickup_tasks(
             "include_closed": str(include_closed).lower(),
             "subtasks": "true",
             "page": page,
-            "order_by": "due_date",
-            "reverse": "false",
+            "order_by": order_by,
+            "reverse": str(reverse).lower(),
         }
         if assignee_ids:
             params["assignees[]"] = assignee_ids
@@ -8500,6 +8639,16 @@ def clickup_is_done_tasks_query(text: str) -> bool:
 def clickup_query_period(text: str) -> tuple[dt.datetime | None, dt.datetime | None, str]:
     normalized = normalize_text(text)
     today = dt.date.today()
+    now = dt.datetime.now()
+    if (
+        ("последн" in normalized and ("недел" in normalized or "7" in normalized))
+        or "за неделю" in normalized
+        or "last 1 week" in normalized
+        or "last 1 weeks" in normalized
+        or "last week" in normalized
+    ):
+        start_day = now.date() - dt.timedelta(days=7)
+        return dt.datetime.combine(start_day, dt.time.min), now, "последние 7 дней"
     if "прошл" in normalized and "недел" in normalized:
         start = today - dt.timedelta(days=today.weekday() + 7)
         end = start + dt.timedelta(days=7)
@@ -8547,12 +8696,19 @@ def clickup_assignee_query(text: str) -> str:
     if re.search(r"\b(?:по|для|у)?\s*(?:всем|всех|все|кажд(?:ому|ого|ый|ая|ые)|barcha|hammaga)\b", normalized):
         return ""
     cleaned = re.sub(
-        r"^\s*(?:/clickup|/clickup_tasks|clickup|кликап|задачи\s+clickup|задачи\s+кликап)\s*",
+        r"^\s*(?:/clickup|/clickup_tasks|clickup|кликап|задачи\s+clickup|задачи\s+кликап|задачи)\s*",
         "",
         text.strip(),
         flags=re.IGNORECASE,
     ).strip(" .,:;!?")
-    cleaned = re.sub(r"^(?:по|для|у|ответственный|ответственная)\s+", "", cleaned, flags=re.IGNORECASE).strip(" .,:;!?")
+    cleaned = re.sub(
+        r"\b(?:clickup|кликап|задачи|task|tasks|открытые|активные|выполненные|закрытые|сделанные|готовые|в\s+процессе|в\s+работе|бэклог|backlog|done|closed|open|progress|сегодня|вчера|эта\s+неделя|эту\s+неделю|прошлая\s+неделя|прошлую\s+неделю|за\s+неделю|за\s+месяц|дедлайн|срок|созданные|обновленные)\b",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"^(?:по|для|у|ответственный|ответственная)\s+", "", cleaned.strip(), flags=re.IGNORECASE).strip(" .,:;!?")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:;!?")
     if clickup_is_my_tasks_query(text):
         return ""
     if normalized in {"clickup", "кликап", "clickup задачи", "кликап задачи", "задачи clickup", "задачи кликап", "/clickup", "/clickup_tasks"}:
@@ -8624,19 +8780,33 @@ def format_clickup_task_line(task: dict[str, Any]) -> list[str]:
 
 def build_clickup_tasks_message(limit: int = 12, text: str = "", telegram_user_id: str | int | None = None) -> str:
     try:
-        assignee_ids: list[str] = []
-        if clickup_is_my_tasks_query(text):
-            clickup_id = clickup_user_id_for_telegram(telegram_user_id)
-            if not clickup_id:
-                return "\n".join([
-                    "<b>ClickUp задачи по мне</b>",
-                    "Не знаю, какой ClickUp-пользователь привязан к твоему Telegram.",
-                    "Отправь /whoami администратору, чтобы добавить привязку.",
-                ])
-            assignee_ids = [clickup_id]
-        tasks = fetch_clickup_tasks(limit=100, assignee_ids=assignee_ids)
-        assignee_query = clickup_assignee_query(text)
-        tasks = clickup_filter_tasks_by_assignee_name(tasks, assignee_query)[:limit]
+        query = clickup_task_query(text, telegram_user_id=telegram_user_id)
+        if clickup_is_my_tasks_query(text) and not query.assignee_ids:
+            return "\n".join([
+                "<b>ClickUp задачи по мне</b>",
+                "Не знаю, какой ClickUp-пользователь привязан к твоему Telegram.",
+                "Отправь /whoami администратору, чтобы добавить привязку.",
+            ])
+        tasks = fetch_clickup_tasks(
+            limit=2000,
+            include_closed=query.include_closed,
+            assignee_ids=query.assignee_ids,
+            extra_params=clickup_extra_params(query),
+            order_by=query.order_by,
+            reverse=query.reverse,
+        )
+        tasks = clickup_filter_tasks_by_assignee_name(tasks, query.assignee_query)
+        if query.start_dt and query.end_dt and not clickup_date_param_names(query.date_field):
+            tasks = [
+                task for task in tasks
+                if (value := clickup_datetime_for_field(task, query.date_field)) and query.start_dt <= value < query.end_dt
+            ]
+        total_tasks = len(tasks)
+        by_status: dict[str, int] = {}
+        for task in tasks:
+            status = clickup_task_status(task) or "без статуса"
+            by_status[status] = by_status.get(status, 0) + 1
+        tasks = tasks[:limit]
     except Exception as exc:
         return "\n".join([
             "<b>ClickUp задачи</b>",
@@ -8644,21 +8814,15 @@ def build_clickup_tasks_message(limit: int = 12, text: str = "", telegram_user_i
             f"Ошибка: {escape_html(str(exc))}",
         ])
     if not tasks:
-        scope = "по мне" if clickup_is_my_tasks_query(text) else (f"для {clickup_assignee_query(text)}" if clickup_assignee_query(text) else "")
-        return f"<b>ClickUp задачи {escape_html(scope)}</b>\nОткрытых задач не нашла.\nИсточник: {escape_html(clickup_task_source_label())}"
-    by_status: dict[str, int] = {}
-    for task in tasks:
-        status = clickup_task_status(task) or "без статуса"
-        by_status[status] = by_status.get(status, 0) + 1
+        return f"<b>ClickUp задачи</b>\nПо фильтру «{escape_html(query.scope_label)}» задач не нашла.\nИсточник: {escape_html(clickup_task_source_label())}"
     title_suffix = ""
-    if clickup_is_my_tasks_query(text):
-        title_suffix = " по мне"
-    elif clickup_assignee_query(text):
-        title_suffix = f" для {clickup_assignee_query(text)}"
+    if query.scope_label:
+        title_suffix = f" — {query.scope_label}"
     lines = [
         f"<b>ClickUp задачи{escape_html(title_suffix)}</b>",
         f"Источник: {escape_html(clickup_task_source_label())}",
-        f"Показано открытых: {len(tasks)}",
+        f"Всего по фильтру: {total_tasks}",
+        f"Показано: {len(tasks)}",
         "Статусы: " + escape_html(", ".join(f"{key}: {value}" for key, value in sorted(by_status.items()))),
         "",
     ]
@@ -8676,27 +8840,22 @@ def build_clickup_tasks_message(limit: int = 12, text: str = "", telegram_user_i
 
 
 def build_clickup_done_tasks_message(limit: int = 200, text: str = "", telegram_user_id: str | int | None = None) -> str:
-    start_dt, end_dt, period_label = clickup_query_period(text)
     try:
-        assignee_ids: list[str] = []
-        if clickup_is_my_tasks_query(text) or " я " in f" {normalize_text(text)} ":
-            clickup_id = clickup_user_id_for_telegram(telegram_user_id)
-            if clickup_id:
-                assignee_ids = [clickup_id]
-        extra_params: dict[str, Any] = {}
-        if start_dt and end_dt:
-            extra_params = {
-                "date_done_gt": int(start_dt.timestamp() * 1000),
-                "date_done_lt": int(end_dt.timestamp() * 1000),
-            }
-        tasks = fetch_clickup_tasks(limit=max(2000, limit), include_closed=True, assignee_ids=assignee_ids, extra_params=extra_params)
-        assignee_query = clickup_assignee_query(text)
-        tasks = clickup_filter_tasks_by_assignee_name(tasks, assignee_query)
+        query = clickup_task_query(text, telegram_user_id=telegram_user_id, done_mode=True)
+        tasks = fetch_clickup_tasks(
+            limit=max(2000, limit),
+            include_closed=query.include_closed,
+            assignee_ids=query.assignee_ids,
+            extra_params=clickup_extra_params(query),
+            order_by=query.order_by,
+            reverse=query.reverse,
+        )
+        tasks = clickup_filter_tasks_by_assignee_name(tasks, query.assignee_query)
         closed_tasks = [task for task in tasks if clickup_is_closed_task(task)]
-        if start_dt and end_dt and not extra_params:
+        if query.start_dt and query.end_dt and not clickup_date_param_names(query.date_field):
             closed_tasks = [
                 task for task in closed_tasks
-                if (closed_at := clickup_task_closed_datetime(task)) and start_dt <= closed_at < end_dt
+                if (closed_at := clickup_datetime_for_field(task, query.date_field)) and query.start_dt <= closed_at < query.end_dt
             ]
         closed_tasks.sort(key=lambda task: clickup_task_closed_datetime(task) or dt.datetime.min, reverse=True)
         total_closed_tasks = len(closed_tasks)
@@ -8706,12 +8865,9 @@ def build_clickup_done_tasks_message(limit: int = 200, text: str = "", telegram_
             "<b>ClickUp выполненные задачи</b>",
             "Не смогла получить закрытые задачи.",
             f"Ошибка: {escape_html(str(exc))}",
-        ])
+    ])
     period_text = ""
-    if start_dt and end_dt:
-        period_text = f"Период: {start_dt.date().isoformat()} — {(end_dt - dt.timedelta(days=1)).date().isoformat()}"
-    elif period_label:
-        period_text = f"Период: {period_label}"
+    period_text = clickup_period_text(query)
     if not shown_closed_tasks:
         lines = ["<b>ClickUp выполненные задачи</b>"]
         if period_text:
@@ -8726,6 +8882,7 @@ def build_clickup_done_tasks_message(limit: int = 200, text: str = "", telegram_
         lines.append(period_text)
     lines.extend([
         f"Источник: {escape_html(clickup_task_source_label())}",
+        f"Фильтр: {escape_html(query.scope_label)}, дата {escape_html(query.date_field)}",
         f"Всего закрытых: {total_closed_tasks}",
         f"Показано: {len(shown_closed_tasks)}",
         "",
