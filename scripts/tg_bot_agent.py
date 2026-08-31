@@ -810,7 +810,52 @@ def telegram_plain_text(value: str) -> str:
     return html.unescape(text)
 
 
+def split_telegram_text(text: str, max_chars: int = 3800) -> list[str]:
+    text = str(text or "")
+    if len(text) <= max_chars:
+        return [text]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in text.splitlines():
+        line_len = len(line) + 1
+        if current and current_len + line_len > max_chars:
+            chunks.append("\n".join(current))
+            current = []
+            current_len = 0
+        if line_len > max_chars:
+            while line:
+                chunks.append(line[:max_chars])
+                line = line[max_chars:]
+            continue
+        current.append(line)
+        current_len += line_len
+    if current:
+        chunks.append("\n".join(current))
+    return chunks or [""]
+
+
 def telegram_send(
+    config: AgentConfig,
+    chat_id: str | int,
+    text: str,
+    reply_markup: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    chunks = split_telegram_text(text)
+    first_response: dict[str, Any] | None = None
+    for index, chunk in enumerate(chunks):
+        response = telegram_send_single(
+            config,
+            chat_id,
+            chunk,
+            reply_markup=reply_markup if index == 0 else None,
+        )
+        if first_response is None:
+            first_response = response
+    return first_response or {"ok": True}
+
+
+def telegram_send_single(
     config: AgentConfig,
     chat_id: str | int,
     text: str,
@@ -818,7 +863,7 @@ def telegram_send(
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "chat_id": chat_id,
-        "text": text[:3900],
+        "text": text,
         "disable_web_page_preview": True,
     }
     if config.parse_mode:
@@ -832,7 +877,7 @@ def telegram_send(
             raise
         fallback = dict(payload)
         fallback.pop("parse_mode", None)
-        fallback["text"] = telegram_plain_text(text)[:3900]
+        fallback["text"] = telegram_plain_text(text)
         append_log("send_message_plain_fallback", {"chat_id": chat_id, "error": str(exc)})
         return telegram_request(config, "sendMessage", fallback)
 
@@ -8630,7 +8675,7 @@ def build_clickup_tasks_message(limit: int = 12, text: str = "", telegram_user_i
     return "\n".join(lines)
 
 
-def build_clickup_done_tasks_message(limit: int = 12, text: str = "", telegram_user_id: str | int | None = None) -> str:
+def build_clickup_done_tasks_message(limit: int = 200, text: str = "", telegram_user_id: str | int | None = None) -> str:
     start_dt, end_dt, period_label = clickup_query_period(text)
     try:
         assignee_ids: list[str] = []
