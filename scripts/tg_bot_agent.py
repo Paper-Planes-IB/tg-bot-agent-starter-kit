@@ -8400,6 +8400,8 @@ def clickup_is_my_tasks_query(text: str) -> bool:
 def clickup_is_done_tasks_query(text: str) -> bool:
     normalized = normalize_text(text)
     has_clickup = "clickup" in normalized or "кликап" in normalized
+    has_task = "задач" in normalized or "вазиф" in normalized
+    has_period = any(marker in normalized for marker in ("недел", "вчера", "сегодня", "ҳафта", "hafta"))
     done_markers = (
         "сделал",
         "сделанные",
@@ -8411,7 +8413,8 @@ def clickup_is_done_tasks_query(text: str) -> bool:
         "bajardim",
         "yopdim",
     )
-    return has_clickup and any(marker in normalized for marker in done_markers)
+    has_done = any(marker in normalized for marker in done_markers)
+    return has_done and ((has_clickup and has_task) or (has_task and has_period))
 
 
 def clickup_query_period(text: str) -> tuple[dt.datetime | None, dt.datetime | None, str]:
@@ -10066,6 +10069,12 @@ def process_text_command(
     digest_id = resolve_digest_id(text)
     if digest_id == "ACCESS-MESSAGE":
         return {"digest_id": digest_id, "answer": build_access_message(text)}
+    if digest_id == "CLICKUP-STATUS":
+        return {"digest_id": digest_id, "answer": build_clickup_status_message()}
+    if digest_id == "CLICKUP-DONE-TASKS":
+        return {"digest_id": digest_id, "answer": build_clickup_done_tasks_message(text=text, telegram_user_id=meta.get("user_id") or chat_id)}
+    if digest_id == "CLICKUP-TASKS":
+        return {"digest_id": digest_id, "answer": build_clickup_tasks_message(text=text, telegram_user_id=meta.get("user_id") or chat_id)}
     inbox_item = classify_inbox_text(text, meta)
     if inbox_item and digest_id in (None, "DEFECT-IN"):
         result = save_inbox_item(config, inbox_item, text, meta, chat_id, message_id)
@@ -10161,12 +10170,6 @@ def process_text_command(
         return {"digest_id": digest_id, "answer": build_schedule_group_message(config, text, source_chat_id=chat_id)}
     if digest_id == "LMS-SUMMARY":
         return {"digest_id": digest_id, "answer": build_tg_lms_summary_message()}
-    if digest_id == "CLICKUP-STATUS":
-        return {"digest_id": digest_id, "answer": build_clickup_status_message()}
-    if digest_id == "CLICKUP-DONE-TASKS":
-        return {"digest_id": digest_id, "answer": build_clickup_done_tasks_message(text=text, telegram_user_id=meta.get("user_id") or chat_id)}
-    if digest_id == "CLICKUP-TASKS":
-        return {"digest_id": digest_id, "answer": build_clickup_tasks_message(text=text, telegram_user_id=meta.get("user_id") or chat_id)}
     if digest_id == "WASTE-SUMMARY":
         return {"digest_id": digest_id, "answer": build_waste_summary_message(text)}
     if digest_id == "WASTE-QA":
