@@ -124,6 +124,7 @@ SCHEDULED_DIGEST_IDS = {
     "LMS-SUMMARY",
     "CLICKUP-STATUS",
     "CLICKUP-TASKS",
+    "CLICKUP-DONE-TASKS",
     "ACCESS-MESSAGE",
     "DASHBOARD-CHART",
     "WASTE-SUMMARY",
@@ -412,6 +413,9 @@ COMMANDS: dict[str, str] = {
     "кликап задачи": "CLICKUP-TASKS",
     "задачи clickup": "CLICKUP-TASKS",
     "задачи кликап": "CLICKUP-TASKS",
+    "сделанные задачи clickup": "CLICKUP-DONE-TASKS",
+    "закрытые задачи clickup": "CLICKUP-DONE-TASKS",
+    "выполненные задачи clickup": "CLICKUP-DONE-TASKS",
     "задачи по мне": "CLICKUP-TASKS",
     "мои задачи": "CLICKUP-TASKS",
     "что у меня": "CLICKUP-TASKS",
@@ -1595,6 +1599,8 @@ def resolve_digest_id(text: str) -> str | None:
         return "STEEL-WEEKLY"
     if normalized.startswith(("/dashboard ", "дашборд ", "спроси дашборд ")):
         return "DASHBOARD-QA"
+    if clickup_is_done_tasks_query(text):
+        return "CLICKUP-DONE-TASKS"
     if normalized.startswith(("/clickup ", "/clickup_tasks ", "clickup ", "кликап ", "задачи clickup ", "задачи кликап ")) or clickup_is_my_tasks_query(text):
         return "CLICKUP-TASKS"
     if normalized.startswith(("/task ", "task ", "покажи задачу ", "карточка задачи ")):
@@ -1785,6 +1791,8 @@ def build_digest_message(config: AgentConfig, digest_id: str, date_arg: str = "l
         return build_tg_lms_summary_message()
     if digest_id == "CLICKUP-STATUS":
         return build_clickup_status_message()
+    if digest_id == "CLICKUP-DONE-TASKS":
+        return build_clickup_done_tasks_message()
     if digest_id == "CLICKUP-TASKS":
         return build_clickup_tasks_message()
     if digest_id == "DASHBOARD-CHART":
@@ -6721,7 +6729,23 @@ def process_due_reminders(now: dt.datetime, send_fn: Any) -> int:
         chat_id = row.get("chat_id") or ""
         if not chat_id:
             continue
-        send_fn(chat_id, row, rows)
+        try:
+            send_fn(chat_id, row, rows)
+            append_log("scheduled_reminder_sent", {
+                "chat_id": chat_id,
+                "reminder_id": row.get("id") or "",
+                "text": row.get("text") or "",
+                "fire_at": row.get("fire_at") or "",
+            })
+        except Exception as exc:
+            append_log("scheduled_reminder_send_failed", {
+                "chat_id": chat_id,
+                "reminder_id": row.get("id") or "",
+                "text": row.get("text") or "",
+                "fire_at": row.get("fire_at") or "",
+                "error": str(exc),
+            })
+            continue
         fired_at = now
         row["last_window_end"] = str(row.get("fire_at") or fired_at.isoformat(timespec="seconds"))
         row["last_fired_at"] = fired_at.isoformat(timespec="seconds")
@@ -8352,6 +8376,68 @@ def clickup_is_my_tasks_query(text: str) -> bool:
     ))
 
 
+def clickup_is_done_tasks_query(text: str) -> bool:
+    normalized = normalize_text(text)
+    has_clickup = "clickup" in normalized or "кликап" in normalized
+    done_markers = (
+        "сделал",
+        "сделанные",
+        "выполнил",
+        "выполненные",
+        "закрыл",
+        "закрытые",
+        "готовые",
+        "bajardim",
+        "yopdim",
+    )
+    return has_clickup and any(marker in normalized for marker in done_markers)
+
+
+def clickup_query_period(text: str) -> tuple[dt.datetime | None, dt.datetime | None, str]:
+    normalized = normalize_text(text)
+    today = dt.date.today()
+    if "прошл" in normalized and "недел" in normalized:
+        start = today - dt.timedelta(days=today.weekday() + 7)
+        end = start + dt.timedelta(days=7)
+        return dt.datetime.combine(start, dt.time.min), dt.datetime.combine(end, dt.time.min), "прошлая неделя"
+    if "эт" in normalized and "недел" in normalized:
+        start = today - dt.timedelta(days=today.weekday())
+        return dt.datetime.combine(start, dt.time.min), dt.datetime.combine(today + dt.timedelta(days=1), dt.time.min), "эта неделя"
+    if "вчера" in normalized:
+        start = today - dt.timedelta(days=1)
+        return dt.datetime.combine(start, dt.time.min), dt.datetime.combine(today, dt.time.min), "вчера"
+    if "сегодня" in normalized:
+        return dt.datetime.combine(today, dt.time.min), dt.datetime.combine(today + dt.timedelta(days=1), dt.time.min), "сегодня"
+    return None, None, ""
+
+
+def clickup_ms_to_datetime(value: Any) -> dt.datetime | None:
+    if value in (None, "", 0, "0"):
+        return None
+    try:
+        return dt.datetime.fromtimestamp(int(value) / 1000)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def clickup_is_closed_task(task: dict[str, Any]) -> bool:
+    status = task.get("status")
+    if isinstance(status, dict):
+        status_type = normalize_text(str(status.get("type") or ""))
+        status_name = normalize_text(str(status.get("status") or ""))
+        return status_type in {"closed", "done", "complete"} or status_name in {"done", "closed", "complete", "готово", "закрыто", "выполнено"}
+    status_name = normalize_text(str(status or ""))
+    return status_name in {"done", "closed", "complete", "готово", "закрыто", "выполнено"}
+
+
+def clickup_task_closed_datetime(task: dict[str, Any]) -> dt.datetime | None:
+    for key in ("date_closed", "date_done", "date_updated"):
+        value = clickup_ms_to_datetime(task.get(key))
+        if value:
+            return value
+    return None
+
+
 def clickup_assignee_query(text: str) -> str:
     normalized = normalize_text(text)
     cleaned = re.sub(
@@ -8480,6 +8566,61 @@ def build_clickup_tasks_message(limit: int = 12, text: str = "", telegram_user_i
             lines.extend(["", f"<b>{escape_html(assignee)} — {len(group)}</b>"])
             for task in group[:5]:
                 lines.extend(format_clickup_task_line(task))
+    return "\n".join(lines)
+
+
+def build_clickup_done_tasks_message(limit: int = 12, text: str = "", telegram_user_id: str | int | None = None) -> str:
+    start_dt, end_dt, period_label = clickup_query_period(text)
+    try:
+        assignee_ids: list[str] = []
+        if clickup_is_my_tasks_query(text) or " я " in f" {normalize_text(text)} ":
+            clickup_id = clickup_user_id_for_telegram(telegram_user_id)
+            if clickup_id:
+                assignee_ids = [clickup_id]
+        tasks = fetch_clickup_tasks(limit=100, include_closed=True, assignee_ids=assignee_ids)
+        assignee_query = clickup_assignee_query(text)
+        tasks = clickup_filter_tasks_by_assignee_name(tasks, assignee_query)
+        closed_tasks = [task for task in tasks if clickup_is_closed_task(task)]
+        if start_dt and end_dt:
+            closed_tasks = [
+                task for task in closed_tasks
+                if (closed_at := clickup_task_closed_datetime(task)) and start_dt <= closed_at < end_dt
+            ]
+        closed_tasks.sort(key=lambda task: clickup_task_closed_datetime(task) or dt.datetime.min, reverse=True)
+        closed_tasks = closed_tasks[:limit]
+    except Exception as exc:
+        return "\n".join([
+            "<b>ClickUp выполненные задачи</b>",
+            "Не смогла получить закрытые задачи.",
+            f"Ошибка: {escape_html(str(exc))}",
+        ])
+    period_text = ""
+    if start_dt and end_dt:
+        period_text = f"Период: {start_dt.date().isoformat()} — {(end_dt - dt.timedelta(days=1)).date().isoformat()}"
+    elif period_label:
+        period_text = f"Период: {period_label}"
+    if not closed_tasks:
+        lines = ["<b>ClickUp выполненные задачи</b>"]
+        if period_text:
+            lines.append(period_text)
+        lines.extend([
+            "Закрытых задач не нашла.",
+            f"Источник: {escape_html(clickup_task_source_label())}",
+        ])
+        return "\n".join(lines)
+    lines = ["<b>ClickUp выполненные задачи</b>"]
+    if period_text:
+        lines.append(period_text)
+    lines.extend([
+        f"Источник: {escape_html(clickup_task_source_label())}",
+        f"Показано закрытых: {len(closed_tasks)}",
+        "",
+    ])
+    for task in closed_tasks:
+        lines.extend(format_clickup_task_line(task))
+        closed_at = clickup_task_closed_datetime(task)
+        if closed_at:
+            lines.append(f"  закрыта: {closed_at.strftime('%Y-%m-%d')}")
     return "\n".join(lines)
 
 
@@ -10001,6 +10142,8 @@ def process_text_command(
         return {"digest_id": digest_id, "answer": build_tg_lms_summary_message()}
     if digest_id == "CLICKUP-STATUS":
         return {"digest_id": digest_id, "answer": build_clickup_status_message()}
+    if digest_id == "CLICKUP-DONE-TASKS":
+        return {"digest_id": digest_id, "answer": build_clickup_done_tasks_message(text=text, telegram_user_id=meta.get("user_id") or chat_id)}
     if digest_id == "CLICKUP-TASKS":
         return {"digest_id": digest_id, "answer": build_clickup_tasks_message(text=text, telegram_user_id=meta.get("user_id") or chat_id)}
     if digest_id == "WASTE-SUMMARY":
