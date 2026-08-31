@@ -3,6 +3,7 @@
 deployment-access/
 data/*.lock
 data/*state*.json
+data/tg_agent_competitors.json
 data/*history*.jsonl
 data/*inbox*.jsonl
 data/*messages*.jsonl

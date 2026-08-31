@@ -2225,10 +2225,14 @@ def configured_competitor_sources() -> list[dict[str, str]]:
                     if isinstance(item, dict):
                         name = str(item.get("name") or item.get("title") or "").strip()
                         url = str(item.get("url") or item.get("link") or "").strip()
+                        source_item = dict(item)
+                        source_item["name"] = name
+                        source_item["url"] = url
                     else:
                         name, url = "", str(item).strip()
+                        source_item = {"name": name, "url": url}
                     if url:
-                        sources.append({"name": name, "url": url})
+                        sources.append(source_item)
         except Exception as exc:
             append_log("competitor_sources_read_error", {"path": str(COMPETITOR_SOURCES_FILE), "error": str(exc)})
     for chunk in TG_AGENT_COMPETITOR_SOURCES.split(","):
@@ -2248,7 +2252,16 @@ def configured_competitor_sources() -> list[dict[str, str]]:
         if url and url not in seen:
             unique.append(item)
             seen.add(url)
-    return unique[:20]
+    return unique[:200]
+
+
+def selected_competitor_sources(text: str, sources: list[dict[str, str]], limit: int = 12) -> list[dict[str, str]]:
+    direction = dashboard_query_direction(normalize_text(text))
+    if direction:
+        filtered = [item for item in sources if normalize_text(str(item.get("direction") or "")) == normalize_text(direction)]
+        if filtered:
+            return filtered[:limit]
+    return sources[:limit]
 
 
 def google_sheets_csv_export_url(url: str) -> str:
@@ -2335,8 +2348,25 @@ def collect_competitor_research_material(payload: str) -> tuple[str, list[str], 
         url = item.get("url", "")
         if not url:
             continue
-        fetched = fetch_competitor_source_text(url)
         title = item.get("name") or url
+        metric_bits = []
+        if item.get("direction"):
+            metric_bits.append(f"направление: {item.get('direction')}")
+        if item.get("score") not in (None, ""):
+            metric_bits.append(f"оценка: {item.get('score')}/5")
+        if item.get("followers_total") not in (None, ""):
+            metric_bits.append(f"подписчики: {item.get('followers_total')}")
+        if item.get("followers_delta") not in (None, ""):
+            metric_bits.append(f"рост подписчиков: {item.get('followers_delta')}")
+        if item.get("posts_period") not in (None, ""):
+            metric_bits.append(f"посты: {item.get('posts_period')}")
+        if item.get("er") not in (None, ""):
+            metric_bits.append(f"ER: {item.get('er')}")
+        notes = str(item.get("notes") or "").strip()
+        if metric_bits or notes:
+            fetched_blocks.append(f"{title}: " + "; ".join(metric_bits + ([notes] if notes else [])))
+            continue
+        fetched = fetch_competitor_source_text(url)
         if fetched:
             fetched_blocks.append(f"{title}: {fetched}")
         else:
@@ -2383,7 +2413,12 @@ def build_competitor_analysis_message(text: str) -> str:
     submitted_urls = extract_urls(payload)
     saved_new_sources = save_competitor_sources_from_urls(submitted_urls)
     material, urls, configured_sources = collect_competitor_research_material(payload)
-    names = extract_competitor_names(material, urls)
+    structured_sources = selected_competitor_sources(text, configured_sources)
+    if structured_sources:
+        urls = [str(item.get("url") or "") for item in structured_sources if item.get("url")]
+    names = [str(item.get("name") or "").strip() for item in structured_sources if item.get("name")]
+    if not names:
+        names = extract_competitor_names(material, urls)
     evidence_lines = [
         line.strip(" -•\t")
         for line in material.splitlines()
@@ -2403,7 +2438,7 @@ def build_competitor_analysis_message(text: str) -> str:
     lines = [
         "<b>Анализ конкурентов</b>",
         "Период: по присланным материалам",
-        f"Источник: {escape_html('постоянные источники' if configured_sources and not payload else 'сообщение в Telegram' + (', ссылки' if urls else ''))}",
+        f"Источник: {escape_html('база конкурентов из Excel' if configured_sources else 'сообщение в Telegram' + (', ссылки' if urls else ''))}",
         "Статус источника: первичный ресерч; выводы основаны на доступном тексте, ссылках и сохраненной методике.",
         "",
         "<b>Короткий вывод</b>",
@@ -2415,7 +2450,27 @@ def build_competitor_analysis_message(text: str) -> str:
     lines.extend(["", "<b>Что видно</b>"])
     if urls:
         lines.append(f"- Есть {len(urls)} ссылк(и/ок) для проверки.")
-    if evidence_lines:
+    if structured_sources:
+        for item in structured_sources[:6]:
+            bits = []
+            if item.get("direction"):
+                bits.append(str(item.get("direction")))
+            if item.get("score") not in (None, ""):
+                bits.append(f"оценка {item.get('score')}/5")
+            if item.get("followers_total") not in (None, ""):
+                bits.append(f"подписчики {item.get('followers_total')}")
+            if item.get("followers_delta") not in (None, ""):
+                bits.append(f"динамика {item.get('followers_delta')}")
+            if item.get("posts_period") not in (None, ""):
+                bits.append(f"посты {item.get('posts_period')}")
+            if item.get("er") not in (None, ""):
+                bits.append(f"ER {item.get('er')}")
+            note = compact_text(str(item.get("notes") or ""), 140)
+            line = f"{item.get('name')}: " + "; ".join(bits)
+            if note:
+                line += f"; {note}"
+            lines.append(f"- {escape_html(line)}")
+    elif evidence_lines:
         for item in evidence_lines[:6]:
             lines.append(f"- {escape_html(compact_text(item, 160))}")
     else:
