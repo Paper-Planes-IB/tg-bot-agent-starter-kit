@@ -2264,6 +2264,71 @@ def selected_competitor_sources(text: str, sources: list[dict[str, str]], limit:
     return sources[:limit]
 
 
+def competitor_source_row_for_prompt(item: dict[str, Any]) -> str:
+    values = [
+        f"name={item.get('name') or ''}",
+        f"direction={item.get('direction') or ''}",
+        f"score={item.get('score') or ''}",
+        f"followers={item.get('followers_total') or ''}",
+        f"followers_delta={item.get('followers_delta') or ''}",
+        f"posts={item.get('posts_period') or ''}",
+        f"er={item.get('er') or ''}",
+        f"url={item.get('url') or ''}",
+    ]
+    notes = compact_text(str(item.get("notes") or ""), 280)
+    if notes:
+        values.append(f"notes={notes}")
+    return " | ".join(values)
+
+
+def build_competitor_brain_prompt(text: str, sources: list[dict[str, Any]], urls: list[str]) -> str:
+    rows = "\n".join(competitor_source_row_for_prompt(item) for item in sources[:40])
+    method = "\n".join(f"- {item}" for item in competitor_research_skill())
+    return "\n".join([
+        "Ты аналитик Toshkent Gullari. Нужно сделать конкурентный ресерч для руководителя по данным ниже.",
+        "",
+        "Запрос пользователя:",
+        text.strip(),
+        "",
+        "Методика, которую нужно применить:",
+        method,
+        "",
+        "Правила ответа:",
+        "- Не пересказывай каждую строку таблицы.",
+        "- Дай управленческие выводы: кто выделяется, где риск, где шанс, что делать.",
+        "- Используй цифры из данных: оценка, подписчики, динамика, посты, ER.",
+        "- Если данных мало для цен/доставки/ассортимента, так и напиши, но не останавливай анализ соцсетей.",
+        "- Не добавляй длинные источники и служебные детали.",
+        "- Формат Telegram HTML: <b>...</b>, короткие пункты, без Markdown-таблиц.",
+        "- Ответ до 2800 символов.",
+        "",
+        "Нужный формат:",
+        "<b>Анализ конкурентов</b>",
+        "Период/источник: ...",
+        "",
+        "<b>Короткий вывод</b>",
+        "...",
+        "",
+        "<b>Кто выделяется</b>",
+        "- ...",
+        "",
+        "<b>Где риск для TG</b>",
+        "- ...",
+        "",
+        "<b>Что можно забрать</b>",
+        "- ...",
+        "",
+        "<b>Что проверить</b>",
+        "- ...",
+        "",
+        "Данные конкурентов:",
+        rows or "Нет структурных данных.",
+        "",
+        "Ссылки:",
+        "\n".join(urls[:12]),
+    ])
+
+
 def google_sheets_csv_export_url(url: str) -> str:
     match = re.search(r"/spreadsheets/d/([^/]+)", url)
     if not match:
@@ -2408,7 +2473,7 @@ def extract_competitor_names(payload: str, urls: list[str]) -> list[str]:
     return unique[:8]
 
 
-def build_competitor_analysis_message(text: str) -> str:
+def build_competitor_analysis_message(config: AgentConfig, text: str) -> str:
     payload = competitor_payload(text)
     submitted_urls = extract_urls(payload)
     saved_new_sources = save_competitor_sources_from_urls(submitted_urls)
@@ -2435,6 +2500,15 @@ def build_competitor_analysis_message(text: str) -> str:
             "",
             f"<b>Методика</b>: {escape_html(skill)}.",
         ])
+    if structured_sources and config.brain_enabled:
+        prompt = build_competitor_brain_prompt(text, structured_sources, urls)
+        result = run_brain_prompt(config, prompt, timeout=min(config.brain_timeout, 120))
+        if result.get("ok") and result.get("answer"):
+            answer = str(result["answer"]).strip()
+            if saved_new_sources:
+                answer += "\n\nИсточник сохранен для следующих запросов: можно писать просто «проанализируй конкурентов»."
+            return answer
+        append_log("competitor_brain_error", {"error": str(result.get("error") or "unknown")})
     lines = [
         "<b>Анализ конкурентов</b>",
         "Период: по присланным материалам",
@@ -2504,10 +2578,10 @@ def build_competitor_analysis_message(text: str) -> str:
     return "\n".join(lines)
 
 
-def build_dashboard_analytics_message(text: str) -> str:
+def build_dashboard_analytics_message(config: AgentConfig, text: str) -> str:
     normalized = normalize_text(text)
     if "конкурент" in normalized or "competitor" in normalized:
-        return build_competitor_analysis_message(text)
+        return build_competitor_analysis_message(config, text)
     rows = dashboard_rows()
     if not rows:
         return "Не нашла слой дашборда management.json. Сначала нужно обновить данные дашборда."
@@ -11008,7 +11082,7 @@ def process_text_command(
     if digest_id == "DASHBOARD-QA":
         return {"digest_id": digest_id, "answer": build_dashboard_answer_message(text)}
     if digest_id == "DASHBOARD-ANALYTICS":
-        return {"digest_id": digest_id, "answer": build_dashboard_analytics_message(text)}
+        return {"digest_id": digest_id, "answer": build_dashboard_analytics_message(config, text)}
     if digest_id == "DASHBOARD-CHART":
         return build_dashboard_chart_message(text)
     if digest_id == "HOT-TASKS":
