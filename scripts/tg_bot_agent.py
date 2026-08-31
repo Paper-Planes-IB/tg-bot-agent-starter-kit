@@ -8378,6 +8378,7 @@ def fetch_clickup_tasks(
     limit: int = 12,
     include_closed: bool = False,
     assignee_ids: list[str] | None = None,
+    extra_params: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     team_id = clickup_team_id()
     list_id = clickup_target_list_id()
@@ -8395,6 +8396,8 @@ def fetch_clickup_tasks(
         }
         if assignee_ids:
             params["assignees[]"] = assignee_ids
+        if extra_params:
+            params.update(extra_params)
         data = clickup_request(path, params)
         tasks = data.get("tasks") if isinstance(data, dict) else []
         page_rows = [row for row in tasks if isinstance(row, dict)]
@@ -8487,7 +8490,7 @@ def clickup_is_closed_task(task: dict[str, Any]) -> bool:
 
 
 def clickup_task_closed_datetime(task: dict[str, Any]) -> dt.datetime | None:
-    for key in ("date_closed", "date_done", "date_updated"):
+    for key in ("date_done", "date_closed", "date_updated"):
         value = clickup_ms_to_datetime(task.get(key))
         if value:
             return value
@@ -8635,11 +8638,17 @@ def build_clickup_done_tasks_message(limit: int = 12, text: str = "", telegram_u
             clickup_id = clickup_user_id_for_telegram(telegram_user_id)
             if clickup_id:
                 assignee_ids = [clickup_id]
-        tasks = fetch_clickup_tasks(limit=max(2000, limit), include_closed=True, assignee_ids=assignee_ids)
+        extra_params: dict[str, Any] = {}
+        if start_dt and end_dt:
+            extra_params = {
+                "date_done_gt": int(start_dt.timestamp() * 1000),
+                "date_done_lt": int(end_dt.timestamp() * 1000),
+            }
+        tasks = fetch_clickup_tasks(limit=max(2000, limit), include_closed=True, assignee_ids=assignee_ids, extra_params=extra_params)
         assignee_query = clickup_assignee_query(text)
         tasks = clickup_filter_tasks_by_assignee_name(tasks, assignee_query)
         closed_tasks = [task for task in tasks if clickup_is_closed_task(task)]
-        if start_dt and end_dt:
+        if start_dt and end_dt and not extra_params:
             closed_tasks = [
                 task for task in closed_tasks
                 if (closed_at := clickup_task_closed_datetime(task)) and start_dt <= closed_at < end_dt
