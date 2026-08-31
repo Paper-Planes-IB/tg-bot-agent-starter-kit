@@ -26,10 +26,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
 DATA_DIR = ROOT / "data"
+AGENT_TIMEZONE = os.environ.get("TG_AGENT_TIMEZONE", "Asia/Tashkent")
+LOCAL_TIMEZONE = dt.datetime.now().astimezone().tzinfo
 BOT_DISPLAY_NAME = os.environ.get("TG_AGENT_DISPLAY_NAME", "TG Bot Agent")
 BOT_PROJECT_NAME = os.environ.get("TG_AGENT_PROJECT_NAME", "Project")
 DEFAULT_DASHBOARD_DATA_DIR = DATA_DIR / "dashboard"
@@ -3307,9 +3310,11 @@ def row_in_window(row: dict[str, Any], start_dt: dt.datetime | None, end_dt: dt.
 def format_period_window(start_dt: dt.datetime | None, end_dt: dt.datetime | None, use_uzbek: bool) -> str:
     if not start_dt or not end_dt:
         return ""
-    if start_dt.date() == end_dt.date():
-        return f"{start_dt.date().isoformat()} {start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')}"
-    return f"{start_dt.strftime('%Y-%m-%d %H:%M')} - {end_dt.strftime('%Y-%m-%d %H:%M')}"
+    start_display = local_to_agent_time(start_dt)
+    end_display = local_to_agent_time(end_dt)
+    if start_display.date() == end_display.date():
+        return f"{start_display.date().isoformat()} {start_display.strftime('%H:%M')} - {end_display.strftime('%H:%M')} Asia/Tashkent"
+    return f"{start_display.strftime('%Y-%m-%d %H:%M')} - {end_display.strftime('%Y-%m-%d %H:%M')} Asia/Tashkent"
 
 
 def write_inbox(rows: list[dict[str, Any]]) -> None:
@@ -6460,11 +6465,13 @@ def next_recurrence_fire_at(recurrence: str, from_time: dt.datetime | None = Non
             return ""
         hh, mm = int(match.group(1)), int(match.group(2))
         try:
-            target = dt.datetime.combine(base.date(), dt.time(hh, mm))
+            base_agent = local_to_agent_time(base)
+            target_agent = dt.datetime.combine(base_agent.date(), dt.time(hh, mm))
         except ValueError:
             return ""
-        if target <= base:
-            target += dt.timedelta(days=1)
+        if target_agent <= base_agent:
+            target_agent += dt.timedelta(days=1)
+        target = agent_to_local_time(target_agent)
         return target.isoformat(timespec="seconds")
     return ""
 
@@ -6653,6 +6660,23 @@ def parse_iso_datetime(value: Any) -> dt.datetime | None:
         return None
 
 
+def agent_zone() -> ZoneInfo:
+    try:
+        return ZoneInfo(AGENT_TIMEZONE)
+    except Exception:
+        return ZoneInfo("Asia/Tashkent")
+
+
+def local_to_agent_time(value: dt.datetime) -> dt.datetime:
+    source = value if value.tzinfo else value.replace(tzinfo=LOCAL_TIMEZONE)
+    return source.astimezone(agent_zone()).replace(tzinfo=None)
+
+
+def agent_to_local_time(value: dt.datetime) -> dt.datetime:
+    source = value if value.tzinfo else value.replace(tzinfo=agent_zone())
+    return source.astimezone(LOCAL_TIMEZONE).replace(tzinfo=None)
+
+
 def previous_recurrence_fire_at(recurrence: str, end_time: dt.datetime) -> dt.datetime | None:
     if recurrence.startswith("every:"):
         spec = recurrence.removeprefix("every:")
@@ -6671,10 +6695,11 @@ def previous_recurrence_fire_at(recurrence: str, end_time: dt.datetime) -> dt.da
         if not match:
             return None
         hh, mm = int(match.group(1)), int(match.group(2))
-        candidate = dt.datetime.combine(end_time.date(), dt.time(hh, mm))
-        if candidate >= end_time:
-            candidate -= dt.timedelta(days=1)
-        return candidate
+        end_agent = local_to_agent_time(end_time)
+        candidate_agent = dt.datetime.combine(end_agent.date(), dt.time(hh, mm))
+        if candidate_agent >= end_agent:
+            candidate_agent -= dt.timedelta(days=1)
+        return agent_to_local_time(candidate_agent)
     return None
 
 
