@@ -8382,21 +8382,28 @@ def fetch_clickup_tasks(
     team_id = clickup_team_id()
     list_id = clickup_target_list_id()
     path = f"/list/{urllib.parse.quote(list_id)}/task" if list_id else f"/team/{urllib.parse.quote(team_id)}/task"
-    params: dict[str, Any] = {
-        "include_closed": str(include_closed).lower(),
-        "subtasks": "true",
-        "page": 0,
-        "order_by": "due_date",
-        "reverse": "false",
-    }
-    if assignee_ids:
-        params["assignees[]"] = assignee_ids
-    data = clickup_request(
-        path,
-        params,
-    )
-    tasks = data.get("tasks") if isinstance(data, dict) else []
-    rows = [row for row in tasks if isinstance(row, dict)]
+    rows: list[dict[str, Any]] = []
+    page = 0
+    max_pages = int(os.environ.get("CLICKUP_MAX_PAGES") or "20")
+    while page < max_pages:
+        params: dict[str, Any] = {
+            "include_closed": str(include_closed).lower(),
+            "subtasks": "true",
+            "page": page,
+            "order_by": "due_date",
+            "reverse": "false",
+        }
+        if assignee_ids:
+            params["assignees[]"] = assignee_ids
+        data = clickup_request(path, params)
+        tasks = data.get("tasks") if isinstance(data, dict) else []
+        page_rows = [row for row in tasks if isinstance(row, dict)]
+        if not page_rows:
+            break
+        rows.extend(page_rows)
+        if len(page_rows) < 100:
+            break
+        page += 1
     if assignee_ids:
         allowed = {str(value) for value in assignee_ids}
         rows = [row for row in rows if clickup_task_assignee_ids(row) & allowed]
@@ -8628,7 +8635,7 @@ def build_clickup_done_tasks_message(limit: int = 12, text: str = "", telegram_u
             clickup_id = clickup_user_id_for_telegram(telegram_user_id)
             if clickup_id:
                 assignee_ids = [clickup_id]
-        tasks = fetch_clickup_tasks(limit=100, include_closed=True, assignee_ids=assignee_ids)
+        tasks = fetch_clickup_tasks(limit=max(2000, limit), include_closed=True, assignee_ids=assignee_ids)
         assignee_query = clickup_assignee_query(text)
         tasks = clickup_filter_tasks_by_assignee_name(tasks, assignee_query)
         closed_tasks = [task for task in tasks if clickup_is_closed_task(task)]
@@ -8638,7 +8645,8 @@ def build_clickup_done_tasks_message(limit: int = 12, text: str = "", telegram_u
                 if (closed_at := clickup_task_closed_datetime(task)) and start_dt <= closed_at < end_dt
             ]
         closed_tasks.sort(key=lambda task: clickup_task_closed_datetime(task) or dt.datetime.min, reverse=True)
-        closed_tasks = closed_tasks[:limit]
+        total_closed_tasks = len(closed_tasks)
+        shown_closed_tasks = closed_tasks[:limit]
     except Exception as exc:
         return "\n".join([
             "<b>ClickUp выполненные задачи</b>",
@@ -8650,7 +8658,7 @@ def build_clickup_done_tasks_message(limit: int = 12, text: str = "", telegram_u
         period_text = f"Период: {start_dt.date().isoformat()} — {(end_dt - dt.timedelta(days=1)).date().isoformat()}"
     elif period_label:
         period_text = f"Период: {period_label}"
-    if not closed_tasks:
+    if not shown_closed_tasks:
         lines = ["<b>ClickUp выполненные задачи</b>"]
         if period_text:
             lines.append(period_text)
@@ -8664,10 +8672,11 @@ def build_clickup_done_tasks_message(limit: int = 12, text: str = "", telegram_u
         lines.append(period_text)
     lines.extend([
         f"Источник: {escape_html(clickup_task_source_label())}",
-        f"Показано закрытых: {len(closed_tasks)}",
+        f"Всего закрытых: {total_closed_tasks}",
+        f"Показано: {len(shown_closed_tasks)}",
         "",
     ])
-    for task in closed_tasks:
+    for task in shown_closed_tasks:
         lines.extend(format_clickup_task_line(task))
         closed_at = clickup_task_closed_datetime(task)
         if closed_at:
