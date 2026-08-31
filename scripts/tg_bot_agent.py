@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Polling Telegram agent for dashboard digests, tasks, summaries, and commands.
+"""Polling Telegram agent for TG dashboard digests and voice commands.
 
 This script is intentionally local/server-side. Voice transcription is done by a
 local command, so the bot does not depend on OpenAI or another paid speech API.
@@ -33,9 +33,7 @@ ROOT = SCRIPT_DIR.parent
 DATA_DIR = ROOT / "data"
 AGENT_TIMEZONE = os.environ.get("TG_AGENT_TIMEZONE", "Asia/Tashkent")
 LOCAL_TIMEZONE = dt.datetime.now().astimezone().tzinfo
-BOT_DISPLAY_NAME = os.environ.get("TG_AGENT_DISPLAY_NAME", "TG Bot Agent")
-BOT_PROJECT_NAME = os.environ.get("TG_AGENT_PROJECT_NAME", "Project")
-DEFAULT_DASHBOARD_DATA_DIR = DATA_DIR / "dashboard"
+DEFAULT_DASHBOARD_DATA_DIR = Path.home() / ".local/lib/tg-dashboard/deployed-source/data"
 DASHBOARD_DATA_DIR = Path(
     os.environ.get("TG_DASHBOARD_DATA_DIR")
     or (DEFAULT_DASHBOARD_DATA_DIR if DEFAULT_DASHBOARD_DATA_DIR.exists() else DATA_DIR)
@@ -56,34 +54,27 @@ CHART_DIR = DATA_DIR / "tg_agent_charts"
 VOICE_REPLY_STATE_FILE = DATA_DIR / "tg_agent_voice_reply_state.json"
 VOICE_REPLY_DIR = DATA_DIR / "tg_agent_voice_replies"
 DEFAULT_CONFIG = DATA_DIR / "bot_alert_config.example.json"
-DEFAULT_LMS_BUG_DATA_DIR = Path(os.environ.get("TG_LMS_BUG_DATA_DIR", str(DATA_DIR / "lms_bug_bot")))
-TG_LMS_HOST = os.environ.get("TG_LMS_HOST", "")
+DEFAULT_LMS_BUG_DATA_DIR = Path.home() / "Library/Application Support/PaperPlanesLMSBugBot"
+TG_LMS_HOST = os.environ.get("TG_LMS_HOST", "178.130.50.200")
 TG_LMS_SSH_PORT = os.environ.get("TG_LMS_SSH_PORT", "2222")
 TG_LMS_SSH_KEY = os.environ.get("TG_LMS_SSH_KEY", str(Path.home() / ".ssh/paperplanes_frappe_selectel"))
 TG_LMS_CONTAINER = os.environ.get("TG_LMS_CONTAINER", "tg-lms-backend-1")
-TG_LMS_SITE = os.environ.get("TG_LMS_SITE", "")
-TG_LMS_URL = os.environ.get("TG_LMS_URL", "")
+TG_LMS_SITE = os.environ.get("TG_LMS_SITE", "tg-lms.178.130.50.200.sslip.io")
+TG_LMS_URL = os.environ.get("TG_LMS_URL", "https://tg-lms.178.130.50.200.sslip.io")
 TG_LMS_DASHBOARD_METHOD = os.environ.get("TG_LMS_DASHBOARD_METHOD", "lms.tg_rewards.get_dashboard")
 CLICKUP_API_BASE = os.environ.get("CLICKUP_API_BASE", "https://api.clickup.com/api/v2").rstrip("/")
 CLICKUP_API_TOKEN_ENV = os.environ.get("CLICKUP_API_TOKEN_ENV", "CLICKUP_API_TOKEN")
 CLICKUP_TEAM_ID = os.environ.get("CLICKUP_TEAM_ID", "")
 CLICKUP_LIST_ID = os.environ.get("CLICKUP_LIST_ID", "")
-CLICKUP_LIST_NAME = os.environ.get("CLICKUP_LIST_NAME", "Main")
+CLICKUP_LIST_NAME = os.environ.get("CLICKUP_LIST_NAME", "ОГ")
 CLICKUP_TELEGRAM_USER_MAP = os.environ.get("CLICKUP_TELEGRAM_USER_MAP", "")
 DEFAULT_PRIORITY_BUSINESS_CHATS = "Мухрим Абдулазизов,Муборак,Мохинул,Абдуазиз"
 DEFAULT_PRIORITY_GROUP_CHATS = "TG-PP,TG+PP,Опер группа,ОГ"
 CALL_RECORDING_EXTENSIONS = {".mp3", ".m4a", ".wav", ".ogg", ".oga", ".opus", ".aac", ".flac", ".mp4", ".mov", ".webm"}
-TG_FLOWERS_WASTE_SPREADSHEET_ID = os.environ.get("TG_FLOWERS_WASTE_SPREADSHEET_ID", "")
-TG_FLOWERS_WASTE_JOURNAL_GID = os.environ.get("TG_FLOWERS_WASTE_JOURNAL_GID", "")
-TG_FLOWERS_WASTE_SUMMARY_GID = os.environ.get("TG_FLOWERS_WASTE_SUMMARY_GID", "")
-TG_FLOWERS_WASTE_URL = os.environ.get(
-    "TG_FLOWERS_WASTE_URL",
-    (
-        f"https://docs.google.com/spreadsheets/d/{TG_FLOWERS_WASTE_SPREADSHEET_ID}/edit?gid={TG_FLOWERS_WASTE_JOURNAL_GID}#gid={TG_FLOWERS_WASTE_JOURNAL_GID}"
-        if TG_FLOWERS_WASTE_SPREADSHEET_ID and TG_FLOWERS_WASTE_JOURNAL_GID
-        else ""
-    ),
-)
+TG_FLOWERS_WASTE_SPREADSHEET_ID = "1ZEKSAAY_mKY55R-OmHA8zWEkDKlcFoY14UY6JQHnGTM"
+TG_FLOWERS_WASTE_JOURNAL_GID = "505500136"
+TG_FLOWERS_WASTE_SUMMARY_GID = "828876102"
+TG_FLOWERS_WASTE_URL = f"https://docs.google.com/spreadsheets/d/{TG_FLOWERS_WASTE_SPREADSHEET_ID}/edit?gid={TG_FLOWERS_WASTE_JOURNAL_GID}#gid={TG_FLOWERS_WASTE_JOURNAL_GID}"
 
 SCHEDULED_DIGEST_IDS = {
     "AGENDA",
@@ -129,6 +120,7 @@ SCHEDULED_DIGEST_IDS = {
     "CLICKUP-TASKS",
     "CLICKUP-DONE-TASKS",
     "ACCESS-MESSAGE",
+    "DASHBOARD-ANALYTICS",
     "DASHBOARD-CHART",
     "WASTE-SUMMARY",
     "WASTE-QA",
@@ -419,6 +411,17 @@ COMMANDS: dict[str, str] = {
     "сделанные задачи clickup": "CLICKUP-DONE-TASKS",
     "закрытые задачи clickup": "CLICKUP-DONE-TASKS",
     "выполненные задачи clickup": "CLICKUP-DONE-TASKS",
+    "/analytics": "DASHBOARD-ANALYTICS",
+    "/analysis": "DASHBOARD-ANALYTICS",
+    "анализ дашборда": "DASHBOARD-ANALYTICS",
+    "аналитика дашборда": "DASHBOARD-ANALYTICS",
+    "проанализируй выручку": "DASHBOARD-ANALYTICS",
+    "проанализируй e-com": "DASHBOARD-ANALYTICS",
+    "проанализируй ecom": "DASHBOARD-ANALYTICS",
+    "анализ e-com": "DASHBOARD-ANALYTICS",
+    "анализ ecom": "DASHBOARD-ANALYTICS",
+    "анализ конкурентов": "DASHBOARD-ANALYTICS",
+    "проанализируй конкурентов": "DASHBOARD-ANALYTICS",
     "задачи по мне": "CLICKUP-TASKS",
     "мои задачи": "CLICKUP-TASKS",
     "что у меня": "CLICKUP-TASKS",
@@ -628,6 +631,7 @@ DIRECTIONS = {
     "wedding": "Wedding",
     "свадьбы": "Wedding",
     "ecom": "E-com",
+    "e com": "E-com",
     "e-com": "E-com",
     "еком": "E-com",
     "яком": "E-com",
@@ -962,7 +966,7 @@ def redact_value(value: str) -> str:
 
 
 def telegram_send_document(config: AgentConfig, chat_id: str | int, path: Path, caption: str = "") -> dict[str, Any]:
-    boundary = f"----tg-bot-agent-{int(time.time() * 1000)}"
+    boundary = f"----tg-dashboard-{int(time.time() * 1000)}"
     fields = {"chat_id": str(chat_id), "caption": caption[:1024]}
     if config.parse_mode:
         fields["parse_mode"] = config.parse_mode
@@ -983,7 +987,7 @@ def telegram_send_document(config: AgentConfig, chat_id: str | int, path: Path, 
 
 
 def telegram_send_photo(config: AgentConfig, chat_id: str | int, path: Path, caption: str = "") -> dict[str, Any]:
-    boundary = f"----tg-bot-agent-photo-{int(time.time() * 1000)}"
+    boundary = f"----tg-dashboard-photo-{int(time.time() * 1000)}"
     body = multipart_body(
         boundary,
         fields={"chat_id": str(chat_id), "caption": caption[:1024], "parse_mode": config.parse_mode},
@@ -1001,7 +1005,7 @@ def telegram_send_photo(config: AgentConfig, chat_id: str | int, path: Path, cap
 
 
 def telegram_send_voice(config: AgentConfig, chat_id: str | int, path: Path, caption: str = "") -> dict[str, Any]:
-    boundary = f"----tg-bot-agent-voice-{int(time.time() * 1000)}"
+    boundary = f"----tg-dashboard-voice-{int(time.time() * 1000)}"
     fields = {"chat_id": str(chat_id)}
     if caption:
         fields["caption"] = caption[:1024]
@@ -1304,7 +1308,7 @@ def discover_chats(config: AgentConfig) -> list[dict[str, Any]]:
 
 def help_text() -> str:
     return "\n".join([
-        f"<b>{BOT_DISPLAY_NAME}</b>",
+        "<b>TG Dashboard Bot</b>",
         "Понимаю текстовые команды и голосовые сообщения.",
         "Чтобы продолжить диалог с Лили, ответь reply на сообщение бота.",
         "",
@@ -1634,6 +1638,8 @@ def resolve_digest_id(text: str) -> str | None:
         return "WASTE-QA"
     if is_dashboard_chart_question(normalized):
         return "DASHBOARD-CHART"
+    if is_dashboard_analytics_question(normalized):
+        return "DASHBOARD-ANALYTICS"
     if is_dashboard_question(normalized):
         return "DASHBOARD-QA"
     if (
@@ -1932,7 +1938,7 @@ def build_sources_message(config: AgentConfig) -> str:
     if config.digest_config.exists():
         digest_config = build_bot_digests.read_json(config.digest_config)
     lines = [
-        f"<b>Источники {BOT_DISPLAY_NAME}</b>",
+        "<b>Источники TG Dashboard</b>",
         f"Конфиг: {escape_html(str(config.digest_config.relative_to(ROOT) if config.digest_config.is_absolute() and config.digest_config.is_relative_to(ROOT) else config.digest_config))}",
         f"Версия: {escape_html(str(digest_config.get('version') or 'n/a'))}",
     ]
@@ -1980,6 +1986,14 @@ def is_dashboard_chart_question(normalized: str) -> bool:
     )
 
 
+def is_dashboard_analytics_question(normalized: str) -> bool:
+    if any(term in normalized for term in {"конкурент", "competitor"}):
+        return any(term in normalized for term in {"анализ", "проанализ", "исслед", "разбер", "посмотри"})
+    analytics_terms = {"анализ", "аналитик", "проанализ", "разбер", "что происходит", "динамик", "просадк", "рост", "падает", "растет", "растёт"}
+    dashboard_terms = {"дашборд", "dashboard", "выруч", "вируч", "оборот", "продаж", "ecom", "e-com", "еком", "направлен"}
+    return any(term in normalized for term in analytics_terms) and any(term in normalized for term in dashboard_terms)
+
+
 def dashboard_rows() -> list[dict[str, Any]]:
     try:
         management = build_bot_digests.read_json(dashboard_data_path("management.json"))
@@ -2012,6 +2026,8 @@ def dashboard_query_period(normalized: str, latest: dt.date) -> tuple[dt.date, d
 
 
 def dashboard_query_direction(normalized: str) -> str:
+    if re.search(r"\be\s*[- ]?\s*com(?:merce)?\b", normalized) or "еком" in normalized or "яком" in normalized:
+        return "E-com"
     for key, direction in DIRECTIONS.items():
         if key in normalized:
             return direction
@@ -2054,7 +2070,7 @@ def dashboard_url_for_period(start: dt.date, end: dt.date, direction: str = "") 
         "periodMode": "week",
         "metricMode": "revenue",
     })
-    return f"https://tg-bot-agent-generator-qa.vercel.app/{page}?{query}"
+    return f"https://tg-dashboard-generator-qa.vercel.app/{page}?{query}"
 
 
 def build_dashboard_answer_message(text: str) -> str:
@@ -2088,6 +2104,18 @@ def build_dashboard_answer_message(text: str) -> str:
             f"Данных за эту дату в источнике пока нет. Последняя доступная дата: {latest.isoformat()}.",
             "Источник: management.daily_direction",
             f"Дашборд: {escape_html(dashboard_url_for_period(latest, latest, direction))}",
+        ])
+    if direction and not selected:
+        return "\n".join([
+            "<b>Ответ из управленческого дашборда</b>",
+            f"Запрос: {escape_html(compact_text(text, 180))}",
+            f"Период: {start.isoformat()} - {end.isoformat()} ({escape_html(period_label)})",
+            f"Разрез: {escape_html(direction)}",
+            "Отдельных строк по этому направлению в источнике за период нет.",
+            "Не показываю 0 как факт продаж: это отсутствие данных в разрезе, а не подтвержденная нулевая выручка.",
+            f"Последняя дата источника: {latest.isoformat()}.",
+            "Источник: management.daily_direction",
+            f"Дашборд: {escape_html(dashboard_url_for_period(start, end, direction))}",
         ])
     total = sum(float(row.get("revenue") or row.get("amount") or 0) for row in selected)
     by_direction: dict[str, float] = {}
@@ -2123,6 +2151,128 @@ def build_dashboard_answer_message(text: str) -> str:
     if direction and not selected:
         lines.append("")
         lines.append("По выбранному направлению нет строк в этом периоде. Проверь период или источник.")
+    return "\n".join(lines)
+
+
+def dashboard_total_for_period(rows: list[dict[str, Any]], start: dt.date, end: dt.date, direction: str = "") -> tuple[float, dict[str, float], list[str]]:
+    total = 0.0
+    by_direction: dict[str, float] = {}
+    source_ids: set[str] = set()
+    for row in rows:
+        if not direction and dashboard_row_is_rollup(row):
+            continue
+        try:
+            row_date = dt.datetime.strptime(str(row.get("date") or ""), "%Y-%m-%d").date()
+        except ValueError:
+            continue
+        if not (start <= row_date <= end):
+            continue
+        row_direction = str(row.get("direction") or "Unknown")
+        if direction and row_direction != direction:
+            continue
+        value = float(row.get("revenue") or row.get("amount") or 0)
+        total += value
+        by_direction[row_direction] = by_direction.get(row_direction, 0.0) + value
+        if row.get("source_id"):
+            source_ids.add(str(row.get("source_id")))
+    return total, by_direction, sorted(source_ids)
+
+
+def pct_delta(current: float, previous: float) -> str:
+    if previous == 0:
+        return "нет базы сравнения"
+    delta = (current - previous) / previous * 100
+    sign = "+" if delta > 0 else ""
+    return f"{sign}{delta:.1f}%"
+
+
+def build_dashboard_analytics_message(text: str) -> str:
+    normalized = normalize_text(text)
+    if "конкурент" in normalized or "competitor" in normalized:
+        return "\n".join([
+            "<b>Анализ конкурентов</b>",
+            "Для анализа нужен источник: ссылка на канал, сайт, таблицу, папку со скриншотами или список конкурентов.",
+            "",
+            "Сейчас к боту подключены TG-чаты, ClickUp, журнал задач, управленческий дашборд и сохраненные записи звонков. Подключенного конкурентного источника пока нет, поэтому честный анализ собрать не из чего.",
+            "",
+            "Можно отправить: «проанализируй конкурентов: ссылка ...» или скинуть файлы/скриншоты в чат.",
+        ])
+    rows = dashboard_rows()
+    if not rows:
+        return "Не нашла слой дашборда management.json. Сначала нужно обновить данные дашборда."
+    latest = dashboard_latest_date(rows)
+    if latest is None:
+        return "В management.json нет дат. Не могу честно собрать анализ."
+    direction = dashboard_query_direction(normalized)
+    if (re.search(r"\be\s*[- ]?\s*com(?:merce)?\b", normalized) or "еком" in normalized or "e-commerce" in normalized) and not direction:
+        direction = "E-com"
+    start, end, period_label = dashboard_query_period(normalized, latest)
+    period_days = max((end - start).days + 1, 1)
+    prev_end = start - dt.timedelta(days=1)
+    prev_start = prev_end - dt.timedelta(days=period_days - 1)
+    current_total, by_direction, source_ids = dashboard_total_for_period(rows, start, end, direction)
+    previous_total, previous_by_direction, _ = dashboard_total_for_period(rows, prev_start, prev_end, direction)
+    stale_days = (dt.date.today() - latest).days
+    stale_line = (
+        f"Данные отстают на {stale_days} дн., последняя дата источника {latest.isoformat()}."
+        if stale_days > 1
+        else f"Последняя дата источника: {latest.isoformat()}."
+    )
+    title = "Анализ E-com" if direction == "E-com" else "Анализ выручки"
+    if direction and not by_direction:
+        return "\n".join([
+            f"<b>{title}</b>",
+            f"Период: {start.isoformat()} - {end.isoformat()} ({escape_html(period_label)})",
+            f"Разрез: {escape_html(direction)}",
+            "Отдельных строк по этому направлению в источнике за период нет.",
+            "Не показываю 0 как факт продаж: это отсутствие данных в разрезе, а не подтвержденная нулевая выручка.",
+            stale_line,
+            "Источник: management.daily_direction",
+            f"Дашборд: {escape_html(dashboard_url_for_period(start, end, direction))}",
+            "",
+            "<b>Что сделать</b>",
+            "- Проверить, почему источник E-com не попал в свежий deployed-source.",
+            "- До исправления источника смотреть E-com в самом дашборде или в исходной таблице.",
+        ])
+    lines = [
+        f"<b>{title}</b>",
+        f"Период: {start.isoformat()} - {end.isoformat()} ({escape_html(period_label)})",
+        f"Сравнение: {prev_start.isoformat()} - {prev_end.isoformat()}",
+        f"Разрез: {escape_html(direction or 'все направления')}",
+        f"Выручка: <b>{escape_html(build_bot_digests.money(current_total))} UZS</b>",
+        f"К прошлому периоду: {escape_html(pct_delta(current_total, previous_total))} ({escape_html(build_bot_digests.money(previous_total))} UZS было)",
+        stale_line,
+        f"Источник: {escape_html(', '.join(source_ids[:5]) or 'management.daily_direction')}",
+        f"Дашборд: {escape_html(dashboard_url_for_period(start, end, direction))}",
+        "",
+        "<b>Что происходит</b>",
+    ]
+    if not direction:
+        strongest = sorted(by_direction.items(), key=lambda item: item[1], reverse=True)[:3]
+        weakest = sorted(by_direction.items(), key=lambda item: item[1])[:3]
+        if strongest:
+            lines.append("Лидеры периода: " + "; ".join(f"{name}: {build_bot_digests.money(value)} UZS" for name, value in strongest) + ".")
+        if weakest:
+            lines.append("Нижняя часть списка: " + "; ".join(f"{name}: {build_bot_digests.money(value)} UZS" for name, value in weakest) + ".")
+    elif current_total > previous_total:
+        lines.append(f"{escape_html(direction)} выше прошлого сопоставимого периода на {escape_html(pct_delta(current_total, previous_total))}.")
+    elif current_total < previous_total:
+        lines.append(f"{escape_html(direction)} ниже прошлого сопоставимого периода на {escape_html(pct_delta(current_total, previous_total))}.")
+    else:
+        lines.append(f"{escape_html(direction)} на уровне прошлого сопоставимого периода.")
+    if direction and previous_by_direction.get(direction, 0.0) == 0:
+        lines.append("Сравнение ограничено: в прошлом периоде по этому направлению нет базы.")
+    lines.extend([
+        "",
+        "<b>Что проверить</b>",
+        "- День или направление с наибольшим отклонением.",
+        "- Нет ли запаздывания источника или неполной выгрузки.",
+        "- По E-com: трафик, заказы, конверсию и средний чек, если эти слои подключены.",
+        "",
+        "<b>Что сделать</b>",
+        "- Если просадка подтверждается, попросить ответственного дать причину и действие на сегодня.",
+        "- Если рост подтверждается, зафиксировать драйвер: канал, акция, ассортимент или операционный фактор.",
+    ])
     return "\n".join(lines)
 
 
@@ -2307,7 +2457,7 @@ def build_steel_weekly_message(config: AgentConfig) -> str:
 
 
 def build_agenda_message(config: AgentConfig) -> str:
-    parts = [f"<b>Повестка {BOT_DISPLAY_NAME}</b>"]
+    parts = ["<b>Повестка TG Dashboard Bot</b>"]
     warnings = [row for row in health_checks(config) if not row["ok"]]
     if warnings:
         parts.append("<b>Запуск / подключения</b>")
@@ -2379,7 +2529,7 @@ def trim_message_block(text: str, limit: int) -> str:
 
 def build_health_message(config: AgentConfig) -> str:
     rows = health_checks(config)
-    lines = [f"<b>Статус {BOT_DISPLAY_NAME}</b>"]
+    lines = ["<b>Статус TG Dashboard Bot</b>"]
     for row in rows:
         marker = "OK" if row["ok"] else "WARN"
         lines.append(f"- {marker} {escape_html(row['name'])}: {escape_html(row['detail'])}")
@@ -2388,7 +2538,7 @@ def build_health_message(config: AgentConfig) -> str:
 
 def build_voice_help_message() -> str:
     lines = [
-        f"<b>Как говорить с {BOT_DISPLAY_NAME}</b>",
+        "<b>Как говорить с TG Dashboard Bot</b>",
         "",
         "<b>Короткие записи</b>",
         "- задача ecom до завтра для Мухассар проверить чеки",
@@ -2437,7 +2587,7 @@ def build_voice_status_message(config: AgentConfig) -> str:
             prompt_detail = display_path(prompt_path)
 
     lines = [
-        f"<b>Voice status {BOT_DISPLAY_NAME}</b>",
+        "<b>Voice status TG Dashboard Bot</b>",
         f"Голос включен: {'да' if config.voice_enabled else 'нет'}",
         f"Лимит длины: {config.voice_max_seconds} сек.",
         f"Язык: {escape_html(config.voice_language)}",
@@ -2471,7 +2621,7 @@ def build_ocr_status_message(config: AgentConfig) -> str:
     command_available = ocr_command_available(config)
     helper_command = command or "не задана"
     lines = [
-        f"<b>OCR status {BOT_DISPLAY_NAME}</b>",
+        "<b>OCR status TG Dashboard Bot</b>",
         f"OCR включен: {'да' if config.ocr_enabled else 'нет'}",
         f"Лимит файла: {config.ocr_max_mb} MB",
         f"Таймаут: {config.ocr_timeout_seconds} сек.",
@@ -2519,7 +2669,7 @@ def build_doctor_message(config: AgentConfig) -> str:
     warnings = [by_name[name] for name in recommended_names if name in by_name and not by_name[name]["ok"]]
     status = "READY" if not blockers else "NOT READY"
     lines = [
-        f"<b>Doctor {BOT_DISPLAY_NAME}: {status}</b>",
+        f"<b>Doctor TG Dashboard Bot: {status}</b>",
         f"Конфиг: {escape_html(display_path(config.digest_config))}",
         f"Журнал: {len(read_inbox(limit=1_000_000))} строк",
         f"Напоминания: {sum(1 for row in read_reminders(limit=1_000_000) if row.get('status') == 'pending')} активных",
@@ -2554,8 +2704,8 @@ def masked_env_status(name: str) -> str:
 
 
 def build_live_status_message(config: AgentConfig) -> str:
-    env_path = Path(os.environ.get("TG_DASHBOARD_AGENT_ENV") or ROOT / "deployment-access" / "tg-bot-agent.env")
-    launchd_label = os.environ.get("TG_DASHBOARD_AGENT_LAUNCHD_LABEL") or "tg-bot-agent"
+    env_path = Path(os.environ.get("TG_DASHBOARD_AGENT_ENV") or ROOT / "deployment-access" / "tg-dashboard-agent.env")
+    launchd_label = os.environ.get("TG_DASHBOARD_AGENT_LAUNCHD_LABEL") or "tg-dashboard-agent"
     plist_path = Path(
         os.environ.get("TG_DASHBOARD_AGENT_PLIST")
         or Path.home() / "Library" / "LaunchAgents" / f"{launchd_label}.plist"
@@ -2580,7 +2730,7 @@ def build_live_status_message(config: AgentConfig) -> str:
     except Exception as exc:
         launchd_status = f"unknown: {exc}"
     rows = [
-        f"<b>Live status {BOT_DISPLAY_NAME}</b>",
+        "<b>Live status TG Dashboard Bot</b>",
         f"env file: {'OK' if env_path.exists() else 'MISS'} {escape_html(display_path(env_path))}",
         f"bot token: {masked_env_status(config.token_env)}",
         f"dry-run chat: {masked_env_status('TG_DASHBOARD_DRY_RUN_CHAT_ID')}",
@@ -2594,7 +2744,7 @@ def build_live_status_message(config: AgentConfig) -> str:
         "<b>Next</b>",
     ]
     if not env_path.exists():
-        rows.append("Создать deployment-access/tg-bot-agent.env из example и заполнить токен/chat id.")
+        rows.append("Создать deployment-access/tg-dashboard-agent.env из example и заполнить токен/chat id.")
     elif not os.environ.get(config.token_env):
         rows.append("source env-файл и повторить: live-status, doctor, telegram-check.")
     elif not os.environ.get("TG_DASHBOARD_DRY_RUN_CHAT_ID"):
@@ -2807,7 +2957,7 @@ def tts_fallback_enabled() -> bool:
 
 
 def convert_audio_to_telegram_voice(source_path: Path, target_path: Path) -> Path:
-    ffmpeg_bin = shutil.which("ffmpeg") or os.environ.get("FFMPEG_BIN", "ffmpeg")
+    ffmpeg_bin = shutil.which("ffmpeg") or "/Users/natalie/bin/ffmpeg"
     if not Path(ffmpeg_bin).exists() and not shutil.which(ffmpeg_bin):
         raise RuntimeError("ffmpeg command not found")
     subprocess.run(
@@ -2876,7 +3026,7 @@ def build_reload_message(config: AgentConfig) -> str:
     brain_count = count_jsonl(BRAIN_HISTORY_FILE)
     status = "OK" if self_test["ok"] and all(item["ok"] for item in health if item["name"] not in {"bot token", "dry-run chat", "sheets webhook", "sheets secret"}) else "WARN"
     lines = [
-        f"<b>Reload {BOT_DISPLAY_NAME}: {status}</b>",
+        f"<b>Reload TG Dashboard Bot: {status}</b>",
         f"Конфиг: {escape_html(display_path(config.digest_config))}",
         f"Журнал: {len(rows)} строк",
         f"Напоминания: {sum(1 for row in reminders if row.get('status') == 'pending')} активных / {len(reminders)} всего",
@@ -2917,7 +3067,7 @@ def build_brain_status_message(config: AgentConfig) -> str:
     history_count = count_jsonl(BRAIN_HISTORY_FILE)
     context_snapshot = build_brain_context_snapshot(task_limit=3, reminder_limit=2, inbox_limit=2)
     lines = [
-        f"<b>Brain status {BOT_DISPLAY_NAME}</b>",
+        "<b>Brain status TG Dashboard Bot</b>",
         f"Включен: {'да' if config.brain_enabled else 'нет'}",
         f"Команда: <code>{escape_html(command or 'не задана')}</code>",
         f"Команда доступна: {'да' if command_exists else 'нет'}",
@@ -3017,9 +3167,9 @@ def build_self_test_message(config: AgentConfig) -> str:
 
 def run_self_tests(config: AgentConfig) -> dict[str, Any]:
     checks: list[dict[str, Any]] = []
-    checks.append(test_check("help route", lambda: BOT_DISPLAY_NAME in build_digest_message(config, "HELP")))
-    checks.append(test_check("agenda route", lambda: f"Повестка {BOT_DISPLAY_NAME}" in build_digest_message(config, "AGENDA")))
-    checks.append(test_check("sources route", lambda: f"Источники {BOT_DISPLAY_NAME}" in build_digest_message(config, "SOURCES")))
+    checks.append(test_check("help route", lambda: "TG Dashboard Bot" in build_digest_message(config, "HELP")))
+    checks.append(test_check("agenda route", lambda: "Повестка TG Dashboard Bot" in build_digest_message(config, "AGENDA")))
+    checks.append(test_check("sources route", lambda: "Источники TG Dashboard" in build_digest_message(config, "SOURCES")))
     checks.append(test_check("stats route", lambda: "Статистика TG Agent" in build_digest_message(config, "STATS")))
     checks.append(test_check("task parse", lambda: classify_inbox_text("задача ecom срочно для Мухассар до завтра проверить чеки", {"kind": "text"}).get("priority") == "high"))
     checks.append(test_check("defect parse", lambda: classify_inbox_text("брак nour 12 стеблей на 450 000 сум", {"kind": "text"}).get("amount") == 450000))
@@ -3037,7 +3187,7 @@ def run_self_tests(config: AgentConfig) -> dict[str, Any]:
     checks.append(test_check("risk parse", lambda: classify_inbox_text("блокер: нет доступа к amo", {"kind": "text"}).get("type") == "risk"))
     checks.append(test_check("question parse", lambda: classify_inbox_text("вопрос: кто даст доступ к amo", {"kind": "text"}).get("type") == "question"))
     checks.append(test_check("waiting parse", lambda: classify_inbox_text("жду выгрузку OX от Мухассар", {"kind": "voice"}).get("status") == "waiting"))
-    checks.append(test_check("ocr status route", lambda: f"OCR status {BOT_DISPLAY_NAME}" in build_digest_message(config, "OCR-STATUS")))
+    checks.append(test_check("ocr status route", lambda: "OCR status TG Dashboard Bot" in build_digest_message(config, "OCR-STATUS")))
     checks.append(test_check("natural search query", lambda: extract_find_query("что я говорила про amo") == "amo"))
     checks.append(test_check("context query", lambda: extract_context_query("что известно про amo") == "amo"))
     checks.append(test_check("next for query", lambda: extract_next_for_query("что делать по amo") == "amo"))
@@ -3262,6 +3412,57 @@ def call_recording_target_dir(message_dt: dt.datetime | None = None) -> Path:
     return target
 
 
+def read_business_messages(limit: int = 1_000_000) -> list[dict[str, Any]]:
+    if not BUSINESS_MESSAGES_FILE.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    with BUSINESS_MESSAGES_FILE.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows[-limit:]
+
+
+def business_message_date(row: dict[str, Any]) -> dt.date | None:
+    raw = str(row.get("ts") or "")
+    if not raw:
+        return None
+    try:
+        return dt.datetime.fromisoformat(raw).date()
+    except ValueError:
+        return None
+
+
+def row_datetime(row: dict[str, Any]) -> dt.datetime | None:
+    return parse_iso_datetime(row.get("ts"))
+
+
+def row_in_window(row: dict[str, Any], start_dt: dt.datetime | None, end_dt: dt.datetime | None) -> bool:
+    stamp = row_datetime(row)
+    if not stamp:
+        return False
+    if start_dt and stamp <= start_dt:
+        return False
+    if end_dt and stamp > end_dt:
+        return False
+    return True
+
+
+def format_period_window(start_dt: dt.datetime | None, end_dt: dt.datetime | None, use_uzbek: bool) -> str:
+    if not start_dt or not end_dt:
+        return ""
+    start_display = local_to_agent_time(start_dt)
+    end_display = local_to_agent_time(end_dt)
+    if start_display.date() == end_display.date():
+        return f"{start_display.date().isoformat()} {start_display.strftime('%H:%M')} - {end_display.strftime('%H:%M')} Asia/Tashkent"
+    return f"{start_display.strftime('%Y-%m-%d %H:%M')} - {end_display.strftime('%Y-%m-%d %H:%M')} Asia/Tashkent"
+
+
 def save_inbox_item(
     config: AgentConfig,
     item: dict[str, Any],
@@ -3334,57 +3535,6 @@ def read_group_messages(limit: int = 1_000_000) -> list[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
     return rows[-limit:]
-
-
-def read_business_messages(limit: int = 1_000_000) -> list[dict[str, Any]]:
-    if not BUSINESS_MESSAGES_FILE.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    with BUSINESS_MESSAGES_FILE.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return rows[-limit:]
-
-
-def business_message_date(row: dict[str, Any]) -> dt.date | None:
-    raw = str(row.get("ts") or "")
-    if not raw:
-        return None
-    try:
-        return dt.datetime.fromisoformat(raw).date()
-    except ValueError:
-        return None
-
-
-def row_datetime(row: dict[str, Any]) -> dt.datetime | None:
-    return parse_iso_datetime(row.get("ts"))
-
-
-def row_in_window(row: dict[str, Any], start_dt: dt.datetime | None, end_dt: dt.datetime | None) -> bool:
-    stamp = row_datetime(row)
-    if not stamp:
-        return False
-    if start_dt and stamp <= start_dt:
-        return False
-    if end_dt and stamp > end_dt:
-        return False
-    return True
-
-
-def format_period_window(start_dt: dt.datetime | None, end_dt: dt.datetime | None, use_uzbek: bool) -> str:
-    if not start_dt or not end_dt:
-        return ""
-    start_display = local_to_agent_time(start_dt)
-    end_display = local_to_agent_time(end_dt)
-    if start_display.date() == end_display.date():
-        return f"{start_display.date().isoformat()} {start_display.strftime('%H:%M')} - {end_display.strftime('%H:%M')} Asia/Tashkent"
-    return f"{start_display.strftime('%Y-%m-%d %H:%M')} - {end_display.strftime('%Y-%m-%d %H:%M')} Asia/Tashkent"
 
 
 def write_inbox(rows: list[dict[str, Any]]) -> None:
@@ -3675,7 +3825,7 @@ def export_memory_markdown(target: Path, days: int = 7, limit: int = 30) -> Path
     recent = period_rows[-limit:]
     reminders = [row for row in read_reminders(limit=1_000_000) if row.get("status") == "pending"][:limit]
     lines = [
-        f"# {BOT_DISPLAY_NAME} memory export",
+        "# TG Dashboard Bot memory export",
         f"period: `{start.isoformat()} - {today.isoformat()}`",
         f"generated_at: `{dt.datetime.now().isoformat(timespec='seconds')}`",
         f"journal_rows_in_period: `{len(period_rows)}`",
@@ -4675,7 +4825,7 @@ def pinned_tasks_message(chat_id: str | int = "") -> str:
     updated = dt.datetime.now().strftime("%d.%m %H:%M")
     if not rows:
         return "\n".join([
-            "<b>Задачи из этого чата</b>" if str(chat_id or "") and not str(chat_id).startswith("-") else f"<b>Задачи {BOT_DISPLAY_NAME}</b>",
+            "<b>Задачи из этого чата</b>" if str(chat_id or "") and not str(chat_id).startswith("-") else "<b>Задачи TG Dashboard</b>",
             "Чисто: открытых задач нет.",
             f"<i>обновлено {escape_html(updated)}</i>",
         ])
@@ -4689,7 +4839,7 @@ def pinned_tasks_message(chat_id: str | int = "") -> str:
     if priority_counts.get("low"):
         bits.append(f"когда-нибудь: {priority_counts['low']}")
     return "\n".join([
-        "<b>Задачи из этого чата</b>" if str(chat_id or "") and not str(chat_id).startswith("-") else f"<b>Задачи {BOT_DISPLAY_NAME}</b>",
+        "<b>Задачи из этого чата</b>" if str(chat_id or "") and not str(chat_id).startswith("-") else "<b>Задачи TG Dashboard</b>",
         " · ".join(bits),
         f"<i>обновлено {escape_html(updated)}</i>",
     ])
@@ -6899,7 +7049,7 @@ def brain_subprocess_env() -> dict[str, str]:
         token = token_file.read_text(encoding="utf-8").strip()
         if token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = token
-    extra_path = os.environ.get("TG_AGENT_EXTRA_PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+    extra_path = "/Users/natalie/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
     env["PATH"] = f"{env.get('PATH', '')}:{extra_path}" if env.get("PATH") else extra_path
     return env
 
@@ -6914,7 +7064,7 @@ def build_brain_prompt(config: AgentConfig, text: str, chat_id: str | int = "") 
         else "Отвечай по-русски, коротко и по делу."
     )
     lines = [
-        f"Ты {BOT_DISPLAY_NAME} для проекта {BOT_PROJECT_NAME}.",
+        "Ты TG Dashboard Bot для проекта Toshkent Gullari.",
         language_instruction,
         "Ты помогаешь Наталье разбирать дашборды, задачи, брак, источники и проверки.",
         "Если нужно выполнить действие, верни JSON: {\"answer\":\"короткий ответ\", \"actions\":[...]}",
@@ -7330,7 +7480,7 @@ def build_activity_message(limit: int = 8) -> str:
     undone_rows = [row for row in rows if row.get("status") == "undone"][-limit:]
     logs = read_recent_logs(limit=limit)
     lines = [
-        f"<b>Последние действия {BOT_DISPLAY_NAME}</b>",
+        "<b>Последние действия TG Dashboard Bot</b>",
         f"Журнал: {len(rows)} строк",
         f"Отменено: {len([row for row in rows if row.get('status') == 'undone'])}",
         f"Логи: {count_jsonl(LOG_DIR / (dt.date.today().isoformat() + '.jsonl')) if LOG_DIR.exists() else 0} строк сегодня",
@@ -7874,6 +8024,10 @@ def format_summary_html(summary: str, use_uzbek: bool) -> str:
     return escaped
 
 
+def rows_contain_uzbek(rows: list[dict[str, Any]]) -> bool:
+    return any(detect_text_language(str(row.get("text") or "")) == "uz" for row in rows)
+
+
 def build_group_important_message(
     config: AgentConfig,
     days: int = 1,
@@ -7939,11 +8093,6 @@ def build_group_important_message(
         shown_sep = "dan" if use_uzbek else "из"
         lines.append(f"{shown_word} {limit} {shown_sep} {len(source_rows)}.")
     return "\n".join(lines)
-
-
-def rows_contain_uzbek(rows: list[dict[str, Any]]) -> bool:
-    return any(detect_text_language(str(row.get("text") or "")) == "uz" for row in rows)
-
 
 
 def priority_terms(env_name: str, default: str) -> list[str]:
@@ -8323,7 +8472,7 @@ def clickup_request(path: str, params: dict[str, Any] | None = None) -> Any:
         headers={
             "Authorization": token_value,
             "Accept": "application/json",
-            "User-Agent": "tg-bot-agent/1.0",
+            "User-Agent": "tg-dashboard-agent/1.0",
         },
     )
     try:
@@ -9469,6 +9618,95 @@ def store_telegram_file(config: AgentConfig, file_id: str, prefix: str, message_
         return str(target)
 
 
+def run_transcribe_command(command: str, audio_path: Path, text_path: Path) -> str:
+    rendered = command.format(input=shlex.quote(str(audio_path)), output=shlex.quote(str(text_path)))
+    completed = subprocess.run(rendered, shell=True, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
+    if completed.returncode != 0:
+        raise RuntimeError(f"transcribe command failed: {completed.stderr.strip() or completed.stdout.strip()}")
+    if text_path.exists() and text_path.read_text(encoding="utf-8").strip():
+        return text_path.read_text(encoding="utf-8").strip()
+    return completed.stdout.strip()
+
+
+def transcription_language(text_path: Path, fallback: str = "") -> str:
+    meta_path = text_path.with_suffix(text_path.suffix + ".meta.json")
+    if meta_path.exists():
+        try:
+            payload = json.loads(meta_path.read_text(encoding="utf-8"))
+            language = str(payload.get("language") or "").strip().lower()
+            if language:
+                return language
+        except (OSError, ValueError, TypeError):
+            pass
+    return "unknown" if fallback.lower() in {"", "auto", "detect"} else fallback.lower()
+
+
+def transcribe_with_whisper(config: AgentConfig, audio_path: Path, work_dir: Path) -> str:
+    whisper = shutil.which("whisper")
+    if not whisper:
+        raise RuntimeError("No local transcription command. Set TG_VOICE_TRANSCRIBE_COMMAND or install whisper CLI.")
+    args = [whisper, str(audio_path)]
+    if config.voice_language.lower() not in {"", "auto", "detect"}:
+        args.extend(["--language", config.voice_language])
+    args.extend([
+            "--model", config.voice_model,
+            "--output_format", "txt",
+            "--output_dir", str(work_dir),
+        ])
+    completed = subprocess.run(
+        args,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=1200,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"whisper failed: {completed.stderr.strip() or completed.stdout.strip()}")
+    candidates = sorted(work_dir.glob("*.txt"), key=lambda path: path.stat().st_mtime, reverse=True)
+    if not candidates:
+        raise RuntimeError("whisper did not produce a transcript")
+    return candidates[0].read_text(encoding="utf-8").strip()
+
+
+def transcribe_voice(config: AgentConfig, message: dict[str, Any]) -> tuple[str, str, str]:
+    if not config.voice_enabled:
+        raise RuntimeError("Voice processing is disabled")
+    voice = message.get("voice") or message.get("audio") or {}
+    duration = int(voice.get("duration") or 0)
+    if duration > config.voice_max_seconds:
+        raise RuntimeError(f"Voice is too long: {duration}s > {config.voice_max_seconds}s")
+    file_id = voice.get("file_id")
+    if not file_id:
+        raise RuntimeError("No Telegram file_id in voice/audio message")
+    with tempfile.TemporaryDirectory(prefix="tg-dashboard-voice-") as tmp:
+        work_dir = Path(tmp)
+        audio_path = work_dir / "voice.oga"
+        text_path = work_dir / "voice.txt"
+        download_telegram_file(config, str(file_id), audio_path)
+        media_local_path = store_local_media_file(config, audio_path, str(file_id), "voice", message.get("message_id"))
+        if config.voice_command:
+            transcript = run_transcribe_command(config.voice_command, audio_path, text_path)
+            return transcript, media_local_path, transcription_language(text_path, config.voice_language)
+        return transcribe_with_whisper(config, audio_path, work_dir), media_local_path, config.voice_language
+
+
+def store_local_media_file(config: AgentConfig, source: Path, file_id: str, prefix: str, message_id: int | None = None) -> str:
+    if not config.media_store_enabled or not source.exists():
+        return ""
+    day_dir = config.media_store_dir / dt.date.today().isoformat()
+    day_dir.mkdir(parents=True, exist_ok=True)
+    suffix = source.suffix or ".bin"
+    safe_prefix = re.sub(r"[^a-zA-Z0-9_-]+", "-", prefix).strip("-") or "media"
+    file_token = re.sub(r"[^a-zA-Z0-9_-]+", "-", Path(file_id).stem).strip("-")[:24] or "file"
+    target = day_dir / f"{safe_prefix}-{message_id or int(time.time())}-{file_token}{suffix}"
+    shutil.copy2(source, target)
+    try:
+        return str(target.relative_to(ROOT))
+    except ValueError:
+        return str(target)
+
+
 def store_call_recording_file(config: AgentConfig, message: dict[str, Any], media: dict[str, Any]) -> str:
     file_id = str(media.get("file_id") or "")
     if not file_id:
@@ -9631,95 +9869,6 @@ def build_call_recordings_message(limit: int = 8) -> str:
     return "\n".join(lines)
 
 
-def run_transcribe_command(command: str, audio_path: Path, text_path: Path) -> str:
-    rendered = command.format(input=shlex.quote(str(audio_path)), output=shlex.quote(str(text_path)))
-    completed = subprocess.run(rendered, shell=True, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
-    if completed.returncode != 0:
-        raise RuntimeError(f"transcribe command failed: {completed.stderr.strip() or completed.stdout.strip()}")
-    if text_path.exists() and text_path.read_text(encoding="utf-8").strip():
-        return text_path.read_text(encoding="utf-8").strip()
-    return completed.stdout.strip()
-
-
-def transcription_language(text_path: Path, fallback: str = "") -> str:
-    meta_path = text_path.with_suffix(text_path.suffix + ".meta.json")
-    if meta_path.exists():
-        try:
-            payload = json.loads(meta_path.read_text(encoding="utf-8"))
-            language = str(payload.get("language") or "").strip().lower()
-            if language:
-                return language
-        except (OSError, ValueError, TypeError):
-            pass
-    return "unknown" if fallback.lower() in {"", "auto", "detect"} else fallback.lower()
-
-
-def transcribe_with_whisper(config: AgentConfig, audio_path: Path, work_dir: Path) -> str:
-    whisper = shutil.which("whisper")
-    if not whisper:
-        raise RuntimeError("No local transcription command. Set TG_VOICE_TRANSCRIBE_COMMAND or install whisper CLI.")
-    args = [whisper, str(audio_path)]
-    if config.voice_language.lower() not in {"", "auto", "detect"}:
-        args.extend(["--language", config.voice_language])
-    args.extend([
-            "--model", config.voice_model,
-            "--output_format", "txt",
-            "--output_dir", str(work_dir),
-        ])
-    completed = subprocess.run(
-        args,
-        cwd=ROOT,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=1200,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(f"whisper failed: {completed.stderr.strip() or completed.stdout.strip()}")
-    candidates = sorted(work_dir.glob("*.txt"), key=lambda path: path.stat().st_mtime, reverse=True)
-    if not candidates:
-        raise RuntimeError("whisper did not produce a transcript")
-    return candidates[0].read_text(encoding="utf-8").strip()
-
-
-def transcribe_voice(config: AgentConfig, message: dict[str, Any]) -> tuple[str, str, str]:
-    if not config.voice_enabled:
-        raise RuntimeError("Voice processing is disabled")
-    voice = message.get("voice") or message.get("audio") or {}
-    duration = int(voice.get("duration") or 0)
-    if duration > config.voice_max_seconds:
-        raise RuntimeError(f"Voice is too long: {duration}s > {config.voice_max_seconds}s")
-    file_id = voice.get("file_id")
-    if not file_id:
-        raise RuntimeError("No Telegram file_id in voice/audio message")
-    with tempfile.TemporaryDirectory(prefix="tg-bot-agent-voice-") as tmp:
-        work_dir = Path(tmp)
-        audio_path = work_dir / "voice.oga"
-        text_path = work_dir / "voice.txt"
-        download_telegram_file(config, str(file_id), audio_path)
-        media_local_path = store_local_media_file(config, audio_path, str(file_id), "voice", message.get("message_id"))
-        if config.voice_command:
-            transcript = run_transcribe_command(config.voice_command, audio_path, text_path)
-            return transcript, media_local_path, transcription_language(text_path, config.voice_language)
-        return transcribe_with_whisper(config, audio_path, work_dir), media_local_path, config.voice_language
-
-
-def store_local_media_file(config: AgentConfig, source: Path, file_id: str, prefix: str, message_id: int | None = None) -> str:
-    if not config.media_store_enabled or not source.exists():
-        return ""
-    day_dir = config.media_store_dir / dt.date.today().isoformat()
-    day_dir.mkdir(parents=True, exist_ok=True)
-    suffix = source.suffix or ".bin"
-    safe_prefix = re.sub(r"[^a-zA-Z0-9_-]+", "-", prefix).strip("-") or "media"
-    file_token = re.sub(r"[^a-zA-Z0-9_-]+", "-", Path(file_id).stem).strip("-")[:24] or "file"
-    target = day_dir / f"{safe_prefix}-{message_id or int(time.time())}-{file_token}{suffix}"
-    shutil.copy2(source, target)
-    try:
-        return str(target.relative_to(ROOT))
-    except ValueError:
-        return str(target)
-
-
 def local_media_path(media_path: str) -> Path:
     path = Path(media_path)
     if path.is_absolute():
@@ -9781,7 +9930,7 @@ def simulate_voice_file(
     media_local_path = store_local_media_file(config, audio_path, audio_path.name, "voice", message_id)
     detected_language = "provided"
     if not transcript:
-        with tempfile.TemporaryDirectory(prefix="tg-bot-agent-sim-voice-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="tg-dashboard-sim-voice-") as tmp:
             text_path = Path(tmp) / "voice.txt"
             if config.voice_command:
                 transcript = run_transcribe_command(config.voice_command, audio_path, text_path)
@@ -9817,7 +9966,7 @@ def process_text_command_dry_run(
         "brain_history": BRAIN_HISTORY_FILE,
         "log_dir": LOG_DIR,
     }
-    with tempfile.TemporaryDirectory(prefix="tg-bot-agent-command-dry-run-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="tg-dashboard-command-dry-run-") as tmp:
         tmp_path = Path(tmp)
         INBOX_FILE = tmp_path / "inbox.jsonl"
         REMINDERS_FILE = tmp_path / "reminders.jsonl"
@@ -9854,7 +10003,7 @@ def simulate_batch_file(
             "brain_history": BRAIN_HISTORY_FILE,
             "log_dir": LOG_DIR,
         }
-        with tempfile.TemporaryDirectory(prefix="tg-bot-agent-batch-dry-run-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="tg-dashboard-batch-dry-run-") as tmp:
             tmp_path = Path(tmp)
             INBOX_FILE = tmp_path / "inbox.jsonl"
             REMINDERS_FILE = tmp_path / "reminders.jsonl"
@@ -9933,7 +10082,7 @@ def strip_html_tags(text: str) -> str:
 
 
 def build_batch_markdown_report(result: dict[str, Any], source: Path | None = None) -> str:
-    lines = [f"# {BOT_DISPLAY_NAME} batch dry-run"]
+    lines = ["# TG Dashboard Bot batch dry-run"]
     if source:
         lines.append(f"source: `{source}`")
     lines.append(f"dry_run: `{bool(result.get('dry_run'))}`")
@@ -10100,7 +10249,7 @@ def handle_update(config: AgentConfig, update: dict[str, Any]) -> None:
         append_log("unauthorized_message", {"chat_id": chat_id, "user_id": user_id, "message_id": message_id, "text": raw_text})
         if is_group_chat(chat):
             return
-        telegram_send(config, chat_id, f"Нет доступа к {BOT_DISPLAY_NAME}. Для подключения отправьте /whoami и перешлите ответ администратору.")
+        telegram_send(config, chat_id, "Нет доступа к TG Dashboard Bot. Для подключения отправьте /whoami и перешлите ответ администратору.")
         return
     if is_group_chat(chat) and is_call_recording_message(message, chat_id):
         try:
@@ -10116,7 +10265,7 @@ def handle_update(config: AgentConfig, update: dict[str, Any]) -> None:
             append_log("unauthorized_message", {"chat_id": chat_id, "user_id": user_id, "message_id": message_id, "text": text})
             if is_group_chat(chat):
                 return
-            telegram_send(config, chat_id, f"Нет доступа к {BOT_DISPLAY_NAME}. Для подключения отправьте /whoami и перешлите ответ администратору.")
+            telegram_send(config, chat_id, "Нет доступа к TG Dashboard Bot. Для подключения отправьте /whoami и перешлите ответ администратору.")
             return
         reply_context = telegram_reply_context(message)
         capture_reason = group_capture_reason(text, user) if is_group_chat(chat) else ""
@@ -10195,7 +10344,6 @@ def handle_update(config: AgentConfig, update: dict[str, Any]) -> None:
             telegram_react(config, chat_id, message_id, "❌")
             telegram_send(config, chat_id, f"Не смог обработать сообщение: {escape_html(str(exc))}")
         append_log("handle_error", {"chat_id": chat_id, "message_id": message_id, "error": str(exc)})
-
 
 
 def handle_business_connection(config: AgentConfig, connection: dict[str, Any]) -> None:
@@ -10374,7 +10522,12 @@ def process_text_command(
     if inbox_item and digest_id in (None, "DEFECT-IN"):
         result = save_inbox_item(config, inbox_item, text, meta, chat_id, message_id)
         if inbox_item.get("type") == "task":
-            maybe_refresh_pinned_tasks(config, chat_id, allow_telegram_side_effects, auto_create=should_auto_create_pinned_tasks(chat_id, meta))
+            maybe_refresh_pinned_tasks(
+                config,
+                chat_id,
+                allow_telegram_side_effects,
+                auto_create=should_auto_create_pinned_tasks(chat_id, meta),
+            )
         return result
 
     digest_id = digest_id or "HELP"
@@ -10543,6 +10696,8 @@ def process_text_command(
         }
     if digest_id == "DASHBOARD-QA":
         return {"digest_id": digest_id, "answer": build_dashboard_answer_message(text)}
+    if digest_id == "DASHBOARD-ANALYTICS":
+        return {"digest_id": digest_id, "answer": build_dashboard_analytics_message(text)}
     if digest_id == "DASHBOARD-CHART":
         return build_dashboard_chart_message(text)
     if digest_id == "HOT-TASKS":
@@ -10741,13 +10896,13 @@ def process_text_command(
     if digest_id == "INBOX-EXPORT":
         csv_path = export_inbox_csv(DATA_DIR / "tg_agent_inbox.csv")
         if allow_telegram_side_effects and chat_id:
-            telegram_send_document(config, chat_id, csv_path, f"CSV-выгрузка журнала {BOT_DISPLAY_NAME}")
+            telegram_send_document(config, chat_id, csv_path, "CSV-выгрузка журнала TG Dashboard")
         return {"digest_id": digest_id, "answer": f"Выгрузила журнал: {escape_html(str(csv_path.relative_to(ROOT)))}"}
     if digest_id == "MEMORY-EXPORT":
         days = parse_period_log_days(text)
         md_path = export_memory_markdown(DATA_DIR / f"tg_agent_memory_{days}d.md", days=days)
         if allow_telegram_side_effects and chat_id:
-            telegram_send_document(config, chat_id, md_path, f"Markdown-выгрузка памяти {BOT_DISPLAY_NAME} за {days} дн.")
+            telegram_send_document(config, chat_id, md_path, f"Markdown-выгрузка памяти TG Dashboard за {days} дн.")
         return {"digest_id": digest_id, "answer": f"Выгрузила память за {days} дн.: {escape_html(str(md_path.relative_to(ROOT)))}"}
     if digest_id == "INBOX-SYNC":
         return {"digest_id": digest_id, "answer": build_sheet_sync_message(sync_inbox_to_sheet(config))}
@@ -10833,7 +10988,7 @@ def run(config: AgentConfig, once: bool = False) -> None:
     if not once:
         lock = acquire_run_lock()
         if not lock.get("ok"):
-            raise RuntimeError(f"{BOT_DISPLAY_NAME} уже запущен: pid={lock.get('pid')} lock={lock.get('path')}")
+            raise RuntimeError(f"TG Dashboard Bot уже запущен: pid={lock.get('pid')} lock={lock.get('path')}")
     state = load_state()
     try:
         while True:
