@@ -74,7 +74,13 @@ TG_AGENT_ALLOWED_CHAT_IDS=-100111,-100222
 TG_AGENT_CALL_RECORDING_CHAT_IDS=-100111
 ```
 
-5. Указать папку хранения. Можно использовать папку Google Drive Desktop:
+5. Если записи приходят через Telegram Business / личные чаты, добавить личные `chat_id` в отдельное поле:
+
+```bash
+TG_AGENT_CALL_RECORDING_BUSINESS_CHAT_IDS=123456789,987654321
+```
+
+6. Указать папку хранения. Можно использовать папку Google Drive Desktop:
 
 ```bash
 TG_AGENT_CALL_RECORDINGS_DIR=/absolute/path/to/Google Drive/Call recordings
@@ -90,6 +96,7 @@ TG_AGENT_CALL_RECORDING_MAX_MB=200
 - по команде `/call_recordings` показывать последние сохранённые записи.
 
 Если `TG_AGENT_CALL_RECORDING_CHAT_IDS` пустой, бот сохраняет медиа из групп только когда в подписи есть слова `звон`, `созвон`, `call`, `recording` или `запис`.
+Если `TG_AGENT_CALL_RECORDING_BUSINESS_CHAT_IDS` пустой, бот не считает каждое голосовое из лички записью звонка, но `/call_recordings` покажет свежие голосовые/файлы из бизнес-личек как кандидатов.
 
 ## 3. Дашборд
 

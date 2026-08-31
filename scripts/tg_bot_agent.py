@@ -3122,6 +3122,10 @@ def configured_call_recording_chat_ids() -> set[str]:
     return parse_id_set(os.environ.get("TG_AGENT_CALL_RECORDING_CHAT_IDS", ""))
 
 
+def configured_call_recording_business_chat_ids() -> set[str]:
+    return parse_id_set(os.environ.get("TG_AGENT_CALL_RECORDING_BUSINESS_CHAT_IDS", ""))
+
+
 def append_call_recording(row: dict[str, Any]) -> Path:
     CALL_RECORDINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with CALL_RECORDINGS_FILE.open("a", encoding="utf-8") as fh:
@@ -3169,17 +3173,38 @@ def call_recording_media(message: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
-def is_call_recording_message(message: dict[str, Any], chat_id: str | int = "") -> bool:
+def is_call_recording_message(message: dict[str, Any], chat_id: str | int = "", *, source: str = "telegram") -> bool:
     media = call_recording_media(message)
     if not media:
         return False
-    allowed = configured_call_recording_chat_ids()
+    allowed = configured_call_recording_business_chat_ids() if source == "telegram_business" else configured_call_recording_chat_ids()
     if allowed and str(chat_id) not in allowed:
         return False
     caption = normalize_text(str(message.get("caption") or ""))
     if not allowed and not any(word in caption for word in ("звон", "созвон", "call", "recording", "запис")):
         return False
     return True
+
+
+def call_recording_candidate_rows(limit: int = 8) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in reversed(read_business_messages(limit=500)):
+        kind = str(row.get("kind") or "").lower()
+        if kind not in {"voice", "audio", "video", "document"}:
+            continue
+        rows.append({
+            "ts": row.get("ts") or "",
+            "chat_id": row.get("chat_id") or "",
+            "chat_title": row.get("chat_title") or "",
+            "message_id": row.get("message_id") or "",
+            "media_kind": kind,
+            "status": "candidate_from_business",
+            "transcript": row.get("text") or "",
+            "media_local_path": row.get("media_local_path") or "",
+        })
+        if len(rows) >= limit:
+            break
+    return rows
 
 
 def call_recording_target_dir(message_dt: dt.datetime | None = None) -> Path:
@@ -9339,6 +9364,24 @@ def build_call_recording_saved_message(row: dict[str, Any]) -> str:
 def build_call_recordings_message(limit: int = 8) -> str:
     rows = list(reversed(read_call_recordings(limit=limit)))
     if not rows:
+        candidates = call_recording_candidate_rows(limit=limit)
+        if candidates:
+            lines = [
+                "<b>Записи звонков</b>",
+                "В отдельном архиве пока пусто, но бот уже видел свежие голосовые/файлы в личных чатах:",
+            ]
+            for row in candidates:
+                stamp = str(row.get("ts") or "")[:16].replace("T", " ")
+                title = str(row.get("chat_title") or row.get("chat_id") or "")
+                text = compact_text(str(row.get("transcript") or ""), 180)
+                kind = str(row.get("media_kind") or "")
+                line = f"- {escape_html(stamp)} / {escape_html(title)} / {escape_html(kind)}"
+                if text:
+                    line += f": {escape_html(text)}"
+                lines.append(line)
+            lines.append("")
+            lines.append("Чтобы складывать такие файлы в папку записей автоматически, добавьте нужные личные chat_id в TG_AGENT_CALL_RECORDING_BUSINESS_CHAT_IDS.")
+            return "\n".join(lines)
         return "\n".join([
             "<b>Записи звонков</b>",
             "Пока пусто.",
@@ -9981,9 +10024,29 @@ def handle_business_message(config: AgentConfig, message: dict[str, Any], event:
         "last_name": user.get("last_name") or "",
         "text": text,
         "kind": meta.get("kind") or "",
+        "media_file_id": meta.get("media_file_id") or "",
+        "media_local_path": meta.get("media_local_path") or "",
+        "transcript_language": meta.get("transcript_language") or "",
         "source": "telegram_business",
     }
     append_business_message(row)
+    if event == "business_message" and is_call_recording_message(message, row["chat_id"], source="telegram_business"):
+        try:
+            recording = handle_call_recording_message(config, message, chat, user)
+            recording["source"] = "telegram_business"
+            append_log("business_call_recording_saved", {
+                "business_connection_id": connection_id,
+                "chat_id": row["chat_id"],
+                "message_id": row["message_id"],
+                "recording_id": recording.get("id") or "",
+            })
+        except Exception as exc:
+            append_log("business_call_recording_error", {
+                "business_connection_id": connection_id,
+                "chat_id": row["chat_id"],
+                "message_id": row["message_id"],
+                "error": str(exc),
+            })
     append_log("business_message_saved", {
         "business_connection_id": connection_id,
         "chat_id": row["chat_id"],

@@ -224,13 +224,19 @@ TG_AGENT_ALLOWED_CHAT_IDS=...
 TG_AGENT_CALL_RECORDING_CHAT_IDS=...
 ```
 
-4. Файлы сохраняются в папку:
+4. Если записи приходят через Telegram Business / личные чаты, нужные личные `chat_id` добавляют отдельно:
+
+```bash
+TG_AGENT_CALL_RECORDING_BUSINESS_CHAT_IDS=...
+```
+
+5. Файлы сохраняются в папку:
 
 ```text
 /Users/natalie/Library/CloudStorage/GoogleDrive-tokaeva@paper-planes.ru/Shared drives/Paper Planes/4. Производство/RG2 Vault/70_Activities/70.1_Engagements/70.1.2_RG2/Toshkent Gullari/03_Артефакты/TG Agent/Call recordings
 ```
 
-5. Лимит размера файла для записей:
+6. Лимит размера файла для записей:
 
 ```bash
 TG_AGENT_CALL_RECORDING_MAX_MB=200
@@ -246,6 +252,8 @@ TG_AGENT_CALL_RECORDING_MAX_MB=200
 - по команде `/call_recordings` показывает последние записи.
 
 Если группа ещё не добавлена в `TG_AGENT_CALL_RECORDING_CHAT_IDS`, бот не будет считать каждое медиа в группе записью звонка. Без этого он сохраняет только файлы с подписью, где есть слова `звон`, `созвон`, `call`, `recording` или `запис`.
+
+Если личный чат ещё не добавлен в `TG_AGENT_CALL_RECORDING_BUSINESS_CHAT_IDS`, бот не будет автоматически переносить каждое голосовое из лички в папку записей, но команда `/call_recordings` покажет такие голосовые и документы как кандидатов.
 
 ## 10. Telegram Business / личные чаты
 
