@@ -2186,17 +2186,115 @@ def pct_delta(current: float, previous: float) -> str:
     return f"{sign}{delta:.1f}%"
 
 
+def extract_urls(text: str) -> list[str]:
+    return [match.rstrip(").,;") for match in re.findall(r"https?://\S+", text)]
+
+
+def competitor_payload(text: str) -> str:
+    cleaned = re.sub(r"(?i)^/?(?:analytics|analysis)\b", "", text).strip()
+    cleaned = re.sub(r"(?i)^(?:проанализируй|анализ|разбери|посмотри)\s+(?:конкурентов|конкуренты|competitors?)\s*[:\-—]?", "", cleaned).strip()
+    return cleaned
+
+
+def extract_competitor_names(payload: str, urls: list[str]) -> list[str]:
+    names: list[str] = []
+    for line in payload.splitlines():
+        line = line.strip(" -•\t")
+        line = re.sub(r"https?://\S+", "", line).strip(" -•\t")
+        line = re.split(r"\s[-—:]\s|,\s*(?:цены|акции|доставка|сильн|слаб|оффер|ассортимент)\b", line, maxsplit=1, flags=re.IGNORECASE)[0].strip()
+        if not line or line.startswith("http"):
+            continue
+        if re.search(r"\b(цена|акци|скидк|доставк|ассортимент|контент|канал|сайт|ссылка|наблюден|вывод|источник)\b", line, flags=re.IGNORECASE):
+            continue
+        if len(line) <= 80:
+            names.append(line)
+    if not names:
+        for url in urls:
+            host = re.sub(r"^https?://", "", url).split("/", 1)[0]
+            host = host.removeprefix("www.")
+            if host and host not in names:
+                names.append(host)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for name in names:
+        key = normalize_text(name)
+        if key and key not in seen:
+            unique.append(name)
+            seen.add(key)
+    return unique[:8]
+
+
+def build_competitor_analysis_message(text: str) -> str:
+    payload = competitor_payload(text)
+    urls = extract_urls(payload)
+    names = extract_competitor_names(payload, urls)
+    evidence_lines = [
+        line.strip(" -•\t")
+        for line in payload.splitlines()
+        if line.strip(" -•\t") and not line.strip().startswith("http")
+    ]
+    has_material = bool(urls or len(payload) >= 80 or names)
+    if not has_material:
+        return "\n".join([
+            "<b>Анализ конкурентов</b>",
+            "Пришли источники: ссылки на сайты/каналы, скриншоты, таблицу или список конкурентов с короткими наблюдениями.",
+            "",
+            "<b>Что можно отправить</b>",
+            "- конкурент 1: ссылка, цены, акции, сильные стороны",
+            "- конкурент 2: ссылка, цены, акции, слабые места",
+            "- вопрос: что забрать себе / где мы слабее / что проверить",
+        ])
+    lines = [
+        "<b>Анализ конкурентов</b>",
+        "Период: по присланным материалам",
+        f"Источник: {escape_html('сообщение в Telegram' + (', ссылки' if urls else ''))}",
+        "Статус источника: первичный анализ; факты ниже основаны только на присланном тексте и ссылках.",
+        "",
+        "<b>Короткий вывод</b>",
+    ]
+    if names:
+        lines.append(f"В разборе {len(names)} конкурент(а/ов): {escape_html(', '.join(names[:5]))}. Нужно сравнить оффер, цены, ассортимент, доставку и коммуникацию.")
+    else:
+        lines.append("Материал похож на конкурентные наблюдения, но названия конкурентов не выделены явно. Нужна ручная проверка названий.")
+    lines.extend(["", "<b>Что видно</b>"])
+    if urls:
+        lines.append(f"- Есть {len(urls)} ссылк(и/ок) для проверки.")
+    if evidence_lines:
+        for item in evidence_lines[:5]:
+            lines.append(f"- {escape_html(compact_text(item, 160))}")
+    else:
+        lines.append("- Пока есть только ссылки; содержательные выводы нужно подтвердить после просмотра страниц/скриншотов.")
+    lines.extend([
+        "",
+        "<b>Что сравнить</b>",
+        "- Оффер: что обещают клиенту и на чем делают акцент.",
+        "- Цена и акции: дешевле/дороже нас, есть ли промо и наборы.",
+        "- Ассортимент: какие категории закрывают лучше нас.",
+        "- Доставка и сервис: скорость, условия, гарантии, возвраты.",
+        "- Контент: какие форматы используют и что вызывает доверие.",
+        "",
+        "<b>Что забрать себе</b>",
+        "- Сильные формулировки оффера, если они яснее наших.",
+        "- Идеи акций или наборов, которые можно быстро проверить.",
+        "- Контентные форматы, которые объясняют продукт лучше карточки товара.",
+        "",
+        "<b>Что проверить</b>",
+        "- Цены по 5-10 сопоставимым товарам.",
+        "- Условия доставки и оплаты.",
+        "- Частоту публикаций и реакции аудитории.",
+        "- Есть ли у конкурента явное преимущество, которое влияет на покупку.",
+    ])
+    if urls:
+        lines.extend(["", "<b>Ссылки</b>"])
+        for url in urls[:6]:
+            lines.append(f"- {escape_html(url)}")
+    return "\n".join(lines)
+
+
 def build_dashboard_analytics_message(text: str) -> str:
     normalized = normalize_text(text)
     if "конкурент" in normalized or "competitor" in normalized:
-        return "\n".join([
-            "<b>Анализ конкурентов</b>",
-            "Для анализа нужен источник: ссылка на канал, сайт, таблицу, папку со скриншотами или список конкурентов.",
-            "",
-            "Сейчас к боту подключены TG-чаты, ClickUp, журнал задач, управленческий дашборд и сохраненные записи звонков. Подключенного конкурентного источника пока нет, поэтому честный анализ собрать не из чего.",
-            "",
-            "Можно отправить: «проанализируй конкурентов: ссылка ...» или скинуть файлы/скриншоты в чат.",
-        ])
+        return build_competitor_analysis_message(text)
     rows = dashboard_rows()
     if not rows:
         return "Не нашла слой дашборда management.json. Сначала нужно обновить данные дашборда."
