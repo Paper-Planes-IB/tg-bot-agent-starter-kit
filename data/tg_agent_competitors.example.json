@@ -1,0 +1,10 @@
+{
+  "sources": [
+    {
+      "name": "Competitor name",
+      "url": "https://example.com",
+      "type": "site",
+      "notes": "What to watch: prices, assortment, delivery, promo, content, reviews"
+    }
+  ]
+}

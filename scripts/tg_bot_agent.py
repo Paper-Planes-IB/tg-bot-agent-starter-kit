@@ -71,6 +71,8 @@ CLICKUP_TELEGRAM_USER_MAP = os.environ.get("CLICKUP_TELEGRAM_USER_MAP", "")
 DEFAULT_PRIORITY_BUSINESS_CHATS = "Мухрим Абдулазизов,Муборак,Мохинул,Абдуазиз"
 DEFAULT_PRIORITY_GROUP_CHATS = "TG-PP,TG+PP,Опер группа,ОГ"
 CALL_RECORDING_EXTENSIONS = {".mp3", ".m4a", ".wav", ".ogg", ".oga", ".opus", ".aac", ".flac", ".mp4", ".mov", ".webm"}
+COMPETITOR_SOURCES_FILE = DATA_DIR / "tg_agent_competitors.json"
+TG_AGENT_COMPETITOR_SOURCES = os.environ.get("TG_AGENT_COMPETITOR_SOURCES", "")
 TG_FLOWERS_WASTE_SPREADSHEET_ID = "1ZEKSAAY_mKY55R-OmHA8zWEkDKlcFoY14UY6JQHnGTM"
 TG_FLOWERS_WASTE_JOURNAL_GID = "505500136"
 TG_FLOWERS_WASTE_SUMMARY_GID = "828876102"
@@ -2190,10 +2192,108 @@ def extract_urls(text: str) -> list[str]:
     return [match.rstrip(").,;") for match in re.findall(r"https?://\S+", text)]
 
 
+def competitor_research_skill() -> list[str]:
+    return [
+        "оффер и позиционирование",
+        "цены и акции",
+        "ассортимент и категории",
+        "доставка, оплата и сервис",
+        "контент и доверие",
+        "отзывы и жалобы",
+        "что можно забрать себе",
+        "риски для TG",
+        "что проверить руками",
+    ]
+
+
 def competitor_payload(text: str) -> str:
     cleaned = re.sub(r"(?i)^/?(?:analytics|analysis)\b", "", text).strip()
     cleaned = re.sub(r"(?i)^(?:проанализируй|анализ|разбери|посмотри)\s+(?:конкурентов|конкуренты|competitors?)\s*[:\-—]?", "", cleaned).strip()
     return cleaned
+
+
+def configured_competitor_sources() -> list[dict[str, str]]:
+    sources: list[dict[str, str]] = []
+    if COMPETITOR_SOURCES_FILE.exists():
+        try:
+            data = json.loads(COMPETITOR_SOURCES_FILE.read_text(encoding="utf-8"))
+            raw_sources = data.get("sources") if isinstance(data, dict) else data
+            if isinstance(raw_sources, list):
+                for item in raw_sources:
+                    if isinstance(item, dict):
+                        name = str(item.get("name") or item.get("title") or "").strip()
+                        url = str(item.get("url") or item.get("link") or "").strip()
+                    else:
+                        name, url = "", str(item).strip()
+                    if url:
+                        sources.append({"name": name, "url": url})
+        except Exception as exc:
+            append_log("competitor_sources_read_error", {"path": str(COMPETITOR_SOURCES_FILE), "error": str(exc)})
+    for chunk in TG_AGENT_COMPETITOR_SOURCES.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "|" in chunk:
+            name, url = [part.strip() for part in chunk.split("|", 1)]
+        else:
+            name, url = "", chunk
+        if url:
+            sources.append({"name": name, "url": url})
+    unique: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in sources:
+        url = item.get("url", "")
+        if url and url not in seen:
+            unique.append(item)
+            seen.add(url)
+    return unique[:20]
+
+
+def fetch_competitor_source_text(url: str) -> str:
+    try:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": "Mozilla/5.0 TGkdagentBot/1.0"},
+            method="GET",
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            content_type = response.headers.get("content-type", "")
+            raw = response.read(350_000)
+        if "text" not in content_type and "html" not in content_type and not url.lower().endswith((".txt", ".html", ".htm")):
+            return ""
+        text = raw.decode("utf-8", errors="ignore")
+        text = re.sub(r"(?is)<(script|style).*?</\1>", " ", text)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        text = html.unescape(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return compact_text(text, 1800)
+    except Exception as exc:
+        append_log("competitor_source_fetch_error", {"url": url, "error": str(exc)})
+        return ""
+
+
+def collect_competitor_research_material(payload: str) -> tuple[str, list[str], list[dict[str, str]]]:
+    urls = extract_urls(payload)
+    sources = configured_competitor_sources()
+    source_urls = [item["url"] for item in sources if item.get("url")]
+    all_urls = []
+    for url in urls + source_urls:
+        if url not in all_urls:
+            all_urls.append(url)
+    fetched_blocks: list[str] = []
+    for item in sources[:8]:
+        url = item.get("url", "")
+        if not url:
+            continue
+        fetched = fetch_competitor_source_text(url)
+        if fetched:
+            title = item.get("name") or url
+            fetched_blocks.append(f"{title}: {fetched}")
+    material_parts = [payload.strip()]
+    if fetched_blocks:
+        material_parts.append("\n".join(fetched_blocks))
+    material = "\n".join(part for part in material_parts if part).strip()
+    return material, all_urls, sources
 
 
 def extract_competitor_names(payload: str, urls: list[str]) -> list[str]:
@@ -2226,29 +2326,29 @@ def extract_competitor_names(payload: str, urls: list[str]) -> list[str]:
 
 def build_competitor_analysis_message(text: str) -> str:
     payload = competitor_payload(text)
-    urls = extract_urls(payload)
-    names = extract_competitor_names(payload, urls)
+    material, urls, configured_sources = collect_competitor_research_material(payload)
+    names = extract_competitor_names(material, urls)
     evidence_lines = [
         line.strip(" -•\t")
-        for line in payload.splitlines()
+        for line in material.splitlines()
         if line.strip(" -•\t") and not line.strip().startswith("http")
     ]
-    has_material = bool(urls or len(payload) >= 80 or names)
+    has_material = bool(urls or len(material) >= 80 or names)
     if not has_material:
+        skill = "; ".join(competitor_research_skill())
         return "\n".join([
             "<b>Анализ конкурентов</b>",
-            "Пришли источники: ссылки на сайты/каналы, скриншоты, таблицу или список конкурентов с короткими наблюдениями.",
+            "Навык закреплен: бот сам сравнивает оффер, цены, ассортимент, доставку, контент, отзывы, риски и идеи для TG.",
             "",
-            "<b>Что можно отправить</b>",
-            "- конкурент 1: ссылка, цены, акции, сильные стороны",
-            "- конкурент 2: ссылка, цены, акции, слабые места",
-            "- вопрос: что забрать себе / где мы слабее / что проверить",
+            "Сейчас не заведены постоянные источники конкурентов. Пришли список ссылок один раз, и я сохраню их как источники для регулярного ресерча.",
+            "",
+            f"<b>Методика</b>: {escape_html(skill)}.",
         ])
     lines = [
         "<b>Анализ конкурентов</b>",
         "Период: по присланным материалам",
-        f"Источник: {escape_html('сообщение в Telegram' + (', ссылки' if urls else ''))}",
-        "Статус источника: первичный анализ; факты ниже основаны только на присланном тексте и ссылках.",
+        f"Источник: {escape_html('постоянные источники' if configured_sources and not payload else 'сообщение в Telegram' + (', ссылки' if urls else ''))}",
+        "Статус источника: первичный ресерч; выводы основаны на доступном тексте, ссылках и сохраненной методике.",
         "",
         "<b>Короткий вывод</b>",
     ]
@@ -2260,10 +2360,10 @@ def build_competitor_analysis_message(text: str) -> str:
     if urls:
         lines.append(f"- Есть {len(urls)} ссылк(и/ок) для проверки.")
     if evidence_lines:
-        for item in evidence_lines[:5]:
+        for item in evidence_lines[:6]:
             lines.append(f"- {escape_html(compact_text(item, 160))}")
     else:
-        lines.append("- Пока есть только ссылки; содержательные выводы нужно подтвердить после просмотра страниц/скриншотов.")
+        lines.append("- Пока есть только ссылки; содержательные выводы нужно подтвердить после просмотра страниц или скриншотов.")
     lines.extend([
         "",
         "<b>Что сравнить</b>",
