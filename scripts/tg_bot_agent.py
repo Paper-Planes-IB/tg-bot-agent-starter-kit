@@ -8489,6 +8489,8 @@ def clickup_task_closed_datetime(task: dict[str, Any]) -> dt.datetime | None:
 
 def clickup_assignee_query(text: str) -> str:
     normalized = normalize_text(text)
+    if re.search(r"\b(?:по|для|у)?\s*(?:всем|всех|все|кажд(?:ому|ого|ый|ая|ые)|barcha|hammaga)\b", normalized):
+        return ""
     cleaned = re.sub(
         r"^\s*(?:/clickup|/clickup_tasks|clickup|кликап|задачи\s+clickup|задачи\s+кликап)\s*",
         "",
