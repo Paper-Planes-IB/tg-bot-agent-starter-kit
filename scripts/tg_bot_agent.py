@@ -7593,7 +7593,7 @@ def group_message_source_label(config: AgentConfig, row: dict[str, Any], index: 
     ts = str(row.get("ts") or "")[11:16] or str(row.get("ts") or "")[:16]
     chat_title = str(row.get("chat_title") or row.get("chat_id") or "чат")
     author = str(row.get("username") or row.get("first_name") or "участник").lstrip("@")
-    label = f"[{index}] Чат: {chat_title} / Автор: @{author} / {ts}"
+    label = f"[{index}] {chat_title} / @{author} / {ts}"
     link = telegram_message_link(row)
     if link:
         return f'<a href="{escape_html(link)}">{escape_html(label)}</a>'
@@ -7601,12 +7601,8 @@ def group_message_source_label(config: AgentConfig, row: dict[str, Any], index: 
     if chat_id and chat_id not in chat_links:
         chat_links[chat_id] = telegram_chat_link(config, chat_id)
     if chat_links.get(chat_id):
-        message_id = str(row.get("message_id") or "")
-        suffix = f" / message_id {message_id}" if message_id else ""
-        return f'<a href="{escape_html(chat_links[chat_id])}">{escape_html(label + suffix)}</a>'
-    message_id = str(row.get("message_id") or "")
-    suffix = f" / message_id {message_id}" if message_id else ""
-    return escape_html(label + suffix)
+        return f'<a href="{escape_html(chat_links[chat_id])}">{escape_html(label)}</a>'
+    return escape_html(label)
 
 
 def run_brain_prompt(config: AgentConfig, prompt_text: str, timeout: int | None = None) -> dict[str, Any]:
@@ -7862,7 +7858,8 @@ def build_group_important_message(
     for idx, row in enumerate(selected_rows[:source_limit], start=1):
         reason = clean_capture_reason(str(row.get("capture_reason") or ""))
         text = compact_text(str(row.get("text") or ""), 90)
-        lines.append(f"- {group_message_source_label(config, row, idx, chat_links)} / {escape_html(reason)}: {escape_html(text)}")
+        reason_part = f" / {escape_html(reason)}" if reason else ""
+        lines.append(f"- {group_message_source_label(config, row, idx, chat_links)}: {escape_html(text)}{reason_part}")
     if len(selected_rows) > source_limit:
         shown_word = "Manba ko'rsatildi" if use_uzbek else "Источников показано"
         shown_sep = "dan" if use_uzbek else "из"
@@ -7928,9 +7925,9 @@ def priority_chat_counts(rows: list[dict[str, Any]], terms: list[str], limit: in
 def business_message_source_label(row: dict[str, Any], index: int) -> str:
     chat_title = str(row.get("chat_title") or row.get("chat_id") or "личный чат")
     username = str(row.get("username") or "").strip()
-    sender = f"@{username}" if username else "без username"
-    message_id = row.get("message_id") or ""
-    return f"[{index}] Чат: {escape_html(chat_title)} / Автор: {escape_html(sender)} / message_id {escape_html(str(message_id))}"
+    sender = f"@{username}" if username else str(row.get("first_name") or "без username")
+    ts = str(row.get("ts") or "")[11:16] or str(row.get("ts") or "")[:16]
+    return f"[{index}] {escape_html(chat_title)} / {escape_html(sender)} / {escape_html(ts)}"
 
 
 def build_business_summary_message(
@@ -7985,9 +7982,8 @@ def build_business_summary_message(
     source_limit = min(len(selected_rows), 4)
     lines.extend(["", "━━━━━━━━━━━━", f"🔎 <b>{'Asosiy manbalar' if use_uzbek else 'Основные источники'}</b>"])
     for idx, row in enumerate(selected_rows[:source_limit], start=1):
-        event = str(row.get("event") or "business_message")
         text = compact_text(str(row.get("text") or ""), 90)
-        lines.append(f"- {business_message_source_label(row, idx)} / {escape_html(event)}: {escape_html(text)}")
+        lines.append(f"- {business_message_source_label(row, idx)}: {escape_html(text)}")
     if len(selected_rows) > source_limit:
         shown_word = "Manba ko'rsatildi" if use_uzbek else "Источников показано"
         shown_sep = "dan" if use_uzbek else "из"
