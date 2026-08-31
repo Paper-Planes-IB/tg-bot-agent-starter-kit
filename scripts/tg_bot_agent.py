@@ -9905,9 +9905,8 @@ def handle_update(config: AgentConfig, update: dict[str, Any]) -> None:
                     telegram_send_voice(config, chat_id, voice_path)
                 except Exception as exc:
                     append_log("voice_reply_error", {"chat_id": chat_id, "message_id": message_id, "error": str(exc)})
-                    telegram_send(config, chat_id, "Не смогла отправить голосовой дубль: " + escape_html(str(exc)))
-        if not is_group_chat(chat):
-            telegram_react(config, chat_id, message_id, "✅")
+            if not is_group_chat(chat):
+                telegram_react(config, chat_id, message_id, "✅")
         append_log("handled_update", {
             "chat_id": chat_id,
             "message_id": message_id,
