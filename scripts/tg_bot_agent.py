@@ -24,6 +24,7 @@ import tempfile
 import time
 import urllib.parse
 import urllib.request
+import ssl
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -73,6 +74,7 @@ DEFAULT_PRIORITY_GROUP_CHATS = "TG-PP,TG+PP,Опер группа,ОГ"
 CALL_RECORDING_EXTENSIONS = {".mp3", ".m4a", ".wav", ".ogg", ".oga", ".opus", ".aac", ".flac", ".mp4", ".mov", ".webm"}
 COMPETITOR_SOURCES_FILE = DATA_DIR / "tg_agent_competitors.json"
 TG_AGENT_COMPETITOR_SOURCES = os.environ.get("TG_AGENT_COMPETITOR_SOURCES", "")
+PUBLIC_SOURCE_SSL_CONTEXT = ssl._create_unverified_context()
 TG_FLOWERS_WASTE_SPREADSHEET_ID = "1ZEKSAAY_mKY55R-OmHA8zWEkDKlcFoY14UY6JQHnGTM"
 TG_FLOWERS_WASTE_JOURNAL_GID = "505500136"
 TG_FLOWERS_WASTE_SUMMARY_GID = "828876102"
@@ -2249,16 +2251,62 @@ def configured_competitor_sources() -> list[dict[str, str]]:
     return unique[:20]
 
 
+def google_sheets_csv_export_url(url: str) -> str:
+    match = re.search(r"/spreadsheets/d/([^/]+)", url)
+    if not match:
+        return ""
+    spreadsheet_id = match.group(1)
+    parsed = urllib.parse.urlparse(url)
+    params = urllib.parse.parse_qs(parsed.query)
+    gid = (params.get("gid") or ["0"])[0]
+    if not gid and parsed.fragment.startswith("gid="):
+        gid = parsed.fragment.split("=", 1)[1]
+    return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv&gid={gid or '0'}"
+
+
+def source_display_name(url: str) -> str:
+    if "docs.google.com/spreadsheets" in url:
+        return "таблица конкурентов"
+    host = re.sub(r"^https?://", "", url).split("/", 1)[0].removeprefix("www.")
+    return host or url
+
+
+def save_competitor_sources_from_urls(urls: list[str]) -> bool:
+    if not urls:
+        return False
+    existing = configured_competitor_sources()
+    seen = {item.get("url", "") for item in existing}
+    changed = False
+    for url in urls:
+        if url not in seen:
+            existing.append({"name": source_display_name(url), "url": url})
+            seen.add(url)
+            changed = True
+    if changed:
+        COMPETITOR_SOURCES_FILE.write_text(json.dumps({"sources": existing}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return changed
+
+
 def fetch_competitor_source_text(url: str) -> str:
     try:
+        fetch_url = google_sheets_csv_export_url(url) if "docs.google.com/spreadsheets" in url else url
         request = urllib.request.Request(
-            url,
+            fetch_url,
             headers={"User-Agent": "Mozilla/5.0 TGkdagentBot/1.0"},
             method="GET",
         )
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=15, context=PUBLIC_SOURCE_SSL_CONTEXT) as response:
             content_type = response.headers.get("content-type", "")
             raw = response.read(350_000)
+        if "docs.google.com/spreadsheets" in url:
+            decoded = raw.decode("utf-8", errors="ignore")
+            reader = csv.reader(decoded.splitlines())
+            lines = []
+            for row in list(reader)[:80]:
+                cells = [cell.strip() for cell in row if cell.strip()]
+                if cells:
+                    lines.append(" | ".join(cells[:8]))
+            return compact_text("\n".join(lines), 2500)
         if "text" not in content_type and "html" not in content_type and not url.lower().endswith((".txt", ".html", ".htm")):
             return ""
         text = raw.decode("utf-8", errors="ignore")
@@ -2269,7 +2317,9 @@ def fetch_competitor_source_text(url: str) -> str:
         return compact_text(text, 1800)
     except Exception as exc:
         append_log("competitor_source_fetch_error", {"url": url, "error": str(exc)})
-        return ""
+        if "401" in str(exc) or "403" in str(exc):
+            return "Нет доступа к таблице. Откройте доступ по ссылке или подключите Google Sheets-доступ на сервере бота."
+        return "Источник не удалось прочитать автоматически. Проверьте ссылку или доступ."
 
 
 def collect_competitor_research_material(payload: str) -> tuple[str, list[str], list[dict[str, str]]]:
@@ -2286,9 +2336,11 @@ def collect_competitor_research_material(payload: str) -> tuple[str, list[str], 
         if not url:
             continue
         fetched = fetch_competitor_source_text(url)
+        title = item.get("name") or url
         if fetched:
-            title = item.get("name") or url
             fetched_blocks.append(f"{title}: {fetched}")
+        else:
+            fetched_blocks.append(f"{title}: источник подключен, но не отдал читаемый текст")
     material_parts = [payload.strip()]
     if fetched_blocks:
         material_parts.append("\n".join(fetched_blocks))
@@ -2312,6 +2364,8 @@ def extract_competitor_names(payload: str, urls: list[str]) -> list[str]:
         for url in urls:
             host = re.sub(r"^https?://", "", url).split("/", 1)[0]
             host = host.removeprefix("www.")
+            if host in {"docs.google.com", "drive.google.com", "sheets.google.com"}:
+                continue
             if host and host not in names:
                 names.append(host)
     unique: list[str] = []
@@ -2326,6 +2380,8 @@ def extract_competitor_names(payload: str, urls: list[str]) -> list[str]:
 
 def build_competitor_analysis_message(text: str) -> str:
     payload = competitor_payload(text)
+    submitted_urls = extract_urls(payload)
+    saved_new_sources = save_competitor_sources_from_urls(submitted_urls)
     material, urls, configured_sources = collect_competitor_research_material(payload)
     names = extract_competitor_names(material, urls)
     evidence_lines = [
@@ -2388,6 +2444,8 @@ def build_competitor_analysis_message(text: str) -> str:
         lines.extend(["", "<b>Ссылки</b>"])
         for url in urls[:6]:
             lines.append(f"- {escape_html(url)}")
+    if saved_new_sources:
+        lines.extend(["", "Источник сохранен для следующих запросов: можно писать просто «проанализируй конкурентов»."])
     return "\n".join(lines)
 
 
