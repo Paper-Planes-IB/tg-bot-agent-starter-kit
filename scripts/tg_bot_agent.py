@@ -74,6 +74,7 @@ DEFAULT_PRIORITY_GROUP_CHATS = "TG-PP,TG+PP,Опер группа,ОГ"
 CALL_RECORDING_EXTENSIONS = {".mp3", ".m4a", ".wav", ".ogg", ".oga", ".opus", ".aac", ".flac", ".mp4", ".mov", ".webm"}
 COMPETITOR_SOURCES_FILE = DATA_DIR / "tg_agent_competitors.json"
 TG_AGENT_COMPETITOR_SOURCES = os.environ.get("TG_AGENT_COMPETITOR_SOURCES", "")
+TG_AGENT_OUTBOUND_SENDER = os.environ.get("TG_AGENT_OUTBOUND_SENDER", "Фатхулло")
 PUBLIC_SOURCE_SSL_CONTEXT = ssl._create_unverified_context()
 TG_FLOWERS_WASTE_SPREADSHEET_ID = "1ZEKSAAY_mKY55R-OmHA8zWEkDKlcFoY14UY6JQHnGTM"
 TG_FLOWERS_WASTE_JOURNAL_GID = "505500136"
@@ -7559,6 +7560,28 @@ def infer_access_purpose(text: str, resource: str) -> str:
     return "работать с материалами и данными по проекту"
 
 
+def clean_outbound_message_text(text: str) -> str:
+    cleaned = text.strip()
+    cleaned = re.sub(r"https://t\.me/c/\d+/\d+", "", cleaned)
+    cleaned = re.sub(r"\bmessage_id\s*[:=]?\s*\d+\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bchat_id\s*[:=]?\s*-?\d+\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip(" \n-–—")
+
+
+def ensure_outbound_sender_signature(text: str) -> str:
+    cleaned = clean_outbound_message_text(text)
+    if not cleaned:
+        return cleaned
+    sender = TG_AGENT_OUTBOUND_SENDER.strip()
+    if not sender:
+        return cleaned
+    if re.search(rf"(?:от|from)\s+{re.escape(sender)}\b", cleaned, flags=re.IGNORECASE) or sender.lower() in cleaned.splitlines()[-1].lower():
+        return cleaned
+    return f"{cleaned}\n\nОт {sender}"
+
+
 def build_access_message(text: str) -> str:
     payload = strip_access_command(text)
     if not payload:
@@ -7596,6 +7619,8 @@ def build_access_message(text: str) -> str:
     lines.extend([
         "",
         "Пожалуйста, проверьте вход и напишите, если доступ не открывается.",
+        "",
+        f"От {escape_html(TG_AGENT_OUTBOUND_SENDER)}",
     ])
     return "\n".join(lines)
 
@@ -8028,7 +8053,7 @@ def known_group_chats() -> list[dict[str, str]]:
     return sorted(chats.values(), key=lambda row: (row.get("title") or "").casefold())
 
 
-def build_groups_message() -> str:
+def build_groups_message(show_ids: bool = False) -> str:
     groups = [row for row in known_group_chats() if str(row.get("chat_id") or "").startswith("-")]
     if not groups:
         return "\n".join([
@@ -8038,10 +8063,13 @@ def build_groups_message() -> str:
         ])
     lines = ["<b>Известные группы</b>"]
     for row in groups:
-        lines.append(f"- {escape_html(row['title'])}: <code>{escape_html(row['chat_id'])}</code>")
+        if show_ids:
+            lines.append(f"- {escape_html(row['title'])}: <code>{escape_html(row['chat_id'])}</code>")
+        else:
+            lines.append(f"- {escape_html(row['title'])}")
     lines.extend([
         "",
-        "Отправка: <code>/send_group chat_id | текст</code>",
+        "Отправка: <code>/send_group название группы | текст</code>",
     ])
     return "\n".join(lines)
 
@@ -8153,10 +8181,11 @@ def build_schedule_group_message(config: AgentConfig, text: str, source_chat_id:
 
 def build_send_group_message(config: AgentConfig, text: str, allow_send: bool = False) -> str:
     target_query, message = parse_group_send_request(text)
+    message = ensure_outbound_sender_signature(message) if message else message
     if not target_query or not message:
         return "\n".join([
             "<b>Нужна группа и текст</b>",
-            "Формат: <code>/send_group chat_id | Дайте статус по задаче ...</code>",
+            "Формат: <code>/send_group название группы | Дайте статус по задаче ...</code>",
             "",
             build_groups_message(),
         ])
@@ -8173,7 +8202,7 @@ def build_send_group_message(config: AgentConfig, text: str, allow_send: bool = 
     if not allow_send:
         return "\n".join([
             "<b>Черновик отправки в группу</b>",
-            f"Группа: {escape_html(title)} / <code>{escape_html(chat_id)}</code>",
+            f"Группа: {escape_html(title)}",
             "",
             escape_html(message),
         ])
@@ -8189,8 +8218,8 @@ def build_send_group_message(config: AgentConfig, text: str, allow_send: bool = 
     append_log("sent_group_message", {"target_chat_id": chat_id, "target_title": title, "message_id": message_id, "text": message})
     return "\n".join([
         "<b>Отправила в группу</b>",
-        f"Группа: {escape_html(title)} / <code>{escape_html(chat_id)}</code>",
-        f"message_id: <code>{escape_html(str(message_id))}</code>" if message_id else "",
+        f"Группа: {escape_html(title)}",
+        "Текст ушел с понятной подписью отправителя.",
     ]).strip()
 
 
