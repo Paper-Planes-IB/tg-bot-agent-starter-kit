@@ -1456,6 +1456,15 @@ def normalize_text(value: str) -> str:
     return " ".join(text.split())
 
 
+SUPPORTED_TEXT_LANGUAGES = {"ru", "uz"}
+DEFAULT_TEXT_LANGUAGE = "ru"
+
+
+def normalize_supported_text_language(language: str) -> str:
+    language = str(language or "").strip().lower()
+    return language if language in SUPPORTED_TEXT_LANGUAGES else DEFAULT_TEXT_LANGUAGE
+
+
 def detect_text_language(value: str) -> str:
     normalized = normalize_text(value)
     uz_markers = {
@@ -1551,7 +1560,7 @@ def detect_text_language(value: str) -> str:
         return "uz"
     if re.search(r"[ўқғҳ]", normalized):
         return "uz"
-    return "ru"
+    return DEFAULT_TEXT_LANGUAGE
 
 
 def localize_answer_for_text(answer: str, source_text: str) -> str:
@@ -8379,6 +8388,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Если в сообщениях есть эмоции, сомнения, тишина после обещания, конфликт, риск или скрытое поручение, явно вытащи это в вывод.",
         "Каркас сводки и названия разделов пиши по-русски. Не переводи всю сводку на узбекский из-за одного узбекского сообщения.",
         "Это должно быть одно сообщение без дублей: не пиши сначала русский пересказ, а затем тот же смысл на узбекском.",
+        "В сводках разрешены только два языка: русский и узбекский. Не используй английский, кроме названий сервисов, ссылок, имен и коротких цитат из исходного сообщения.",
         "Общий вывод, заголовки и сквозные управленческие выводы пиши на языке отправления сводки. Для текущих регулярных сводок это русский.",
         "Информацию по конкретному чату пиши на языке этого чата: русский чат — русский пункт, узбекский чат — узбекский пункт. Если пункт объединяет несколько чатов на разных языках, раздели его по чатам.",
         "Не переводи цитаты, имена, короткие формулировки и названия чатов.",
