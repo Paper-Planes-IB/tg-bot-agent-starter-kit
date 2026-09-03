@@ -118,6 +118,7 @@ SCHEDULED_DIGEST_IDS = {
     "QUESTIONS",
     "OPEN-QUESTIONS",
     "GROUP-IMPORTANT",
+    "EMPLOYEE-TASK-SUMMARY",
     "BUSINESS-SUMMARY",
     "GROUPS",
     "SEND-GROUP",
@@ -385,6 +386,11 @@ COMMANDS: dict[str, str] = {
     "/send_to_group": "SEND-GROUP",
     "/schedule_group": "SCHEDULE-GROUP",
     "/regular_group": "SCHEDULE-GROUP",
+    "/employee_task_summary": "EMPLOYEE-TASK-SUMMARY",
+    "/staff_tasks_summary": "EMPLOYEE-TASK-SUMMARY",
+    "сводка задач сотрудников": "EMPLOYEE-TASK-SUMMARY",
+    "задачи сотрудников": "EMPLOYEE-TASK-SUMMARY",
+    "напоминание по задачам сотрудников": "EMPLOYEE-TASK-SUMMARY",
     "напиши в группу": "SEND-GROUP",
     "отправь в группу": "SEND-GROUP",
     "попроси в группе": "SEND-GROUP",
@@ -1663,6 +1669,10 @@ def resolve_digest_id(text: str) -> str | None:
         and ("чатах" in normalized or "групп" in normalized or "внешн" in normalized)
     ) or normalized.startswith(("/group_important", "/chats_important", "что было важного в чатах")):
         return "GROUP-IMPORTANT"
+    if normalized.startswith(("/employee_task_summary", "/staff_tasks_summary")) or (
+        "задач" in normalized and "сотрудник" in normalized
+    ):
+        return "EMPLOYEE-TASK-SUMMARY"
     if normalized.startswith(("/steel_morning", "утренняя сводка", "что на утро", "утро")):
         return "STEEL-MORNING"
     if normalized.startswith(("/steel_weekly", "недельный обзор", "обзор за неделю")):
@@ -1849,6 +1859,8 @@ def build_digest_message(config: AgentConfig, digest_id: str, date_arg: str = "l
         return build_period_log_message(days=7)
     if digest_id == "GROUP-IMPORTANT":
         return build_group_important_message(config, days=1)
+    if digest_id == "EMPLOYEE-TASK-SUMMARY":
+        return build_employee_task_summary_message(config, days=1)
     if digest_id == "BUSINESS-SUMMARY":
         return build_business_summary_message(config, days=1)
     if digest_id == "GROUPS":
@@ -3576,6 +3588,7 @@ def run_self_tests(config: AgentConfig) -> dict[str, Any]:
     checks.append(test_check("access redaction", lambda: "secret" not in redact_sensitive_text("пароль: secret")))
     checks.append(test_check("groups route", lambda: resolve_digest_id("Какие чаты есть у меня") == "GROUPS"))
     checks.append(test_check("business summary route", lambda: resolve_digest_id("А какие есть личные сообщения") == "BUSINESS-SUMMARY"))
+    checks.append(test_check("employee task summary route", lambda: resolve_digest_id("сводка задач сотрудников") == "EMPLOYEE-TASK-SUMMARY"))
     checks.append(test_check("uzbek summary language", lambda: rows_contain_uzbek([{"text": "ertaga Flowers savdosini tekshirish kerak"}])))
     checks.append(test_check("send group route", lambda: resolve_digest_id("/send_group -1001 | Дайте статус") == "SEND-GROUP"))
     checks.append(test_check("schedule group route", lambda: resolve_digest_id("/schedule_group -1001 | каждый день в 10:00 | Дайте статус") == "SCHEDULE-GROUP"))
@@ -7339,6 +7352,8 @@ def render_due_reminder_text(config: AgentConfig, row: dict[str, Any], all_rows:
     window = scheduled_digest_window(row, all_rows or [])
     if digest_id == "GROUP-IMPORTANT":
         answer = build_group_important_message(config, start_dt=window[0], end_dt=window[1])
+    elif digest_id == "EMPLOYEE-TASK-SUMMARY":
+        answer = build_employee_task_summary_message(config, start_dt=window[0], end_dt=window[1])
     elif digest_id == "BUSINESS-SUMMARY":
         answer = build_business_summary_message(config, start_dt=window[0], end_dt=window[1])
     else:
@@ -8426,6 +8441,8 @@ def group_summary_context(chat_title: str) -> str:
     normalized = normalize_text(chat_title)
     if "toshkent gullari чат" in normalized or normalized == "toshkent gullari" or "общий чат компании" in normalized:
         return "group_type:company_general"
+    if "задачи сотруд" in normalized or "staff tasks" in normalized or "employee tasks" in normalized:
+        return "group_type:employee_task_reminders"
     if "опер" in normalized or normalized == "ог" or " ог" in normalized:
         return "group_type:operational_hq"
     if "ox вопросы" in normalized or "ох вопросы" in normalized or "amo" in normalized:
@@ -8557,6 +8574,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Для разных групп применяй разные акценты:",
         "- Опер группа (ОГ): это самая важная группа. Вытащи задачи по темам, важные уведомления, решения, блокеры и кому нужен следующий шаг.",
         "- В Опер группе самые важные темы: маркетплейс, IT и продажи. Если такие темы есть, выводи их в 'Важное' первыми и обязательно указывай тему рядом с названием группы.",
+        "- Задачи сотрудникам: это чат поручений. Вечером делай из него напоминание: кто что должен сделать, какой срок указан, что не закрыто, кого нужно пинговать. Не пересказывай обычную переписку.",
         "- Toshkent Gullari чат: это общий чат компании. Бери только важные уведомления, прямые упоминания @tggfathullo и сообщения, где явно нужен следующий шаг Фатхулло. Обычную болтовню и операционный шум пропускай.",
         "- TG-OX Админ и TG-PP: это чаты с внешними консультантами. Держи фокус на ходе диалога, подвисших вопросах, обещаниях без ответа, следующих пингах.",
         "- OX вопросы и amo: присылай баги, ошибки, сбои, проблемы доступа, неправильные данные, неработающие сценарии и кто должен исправить.",
@@ -8744,6 +8762,59 @@ def build_group_important_message(
         for idx, row in enumerate(selected_rows, start=1):
             text = compact_text(str(row.get("text") or ""), 220)
             lines.append(f"- [{idx}] {escape_html(text)}")
+    return "\n".join(lines)
+
+
+def is_employee_task_chat(row: dict[str, Any]) -> bool:
+    title = normalize_text(str(row.get("chat_title") or ""))
+    username = normalize_text(str(row.get("chat_username") or ""))
+    return "задачи сотруд" in title or "staff tasks" in title or "employee tasks" in title or "задачи сотруд" in username
+
+
+def build_employee_task_summary_message(
+    config: AgentConfig,
+    days: int = 1,
+    limit: int = 200,
+    start_dt: dt.datetime | None = None,
+    end_dt: dt.datetime | None = None,
+) -> str:
+    days = max(1, min(30, int(days)))
+    today_date = (end_dt or dt.datetime.now()).date()
+    start_date = today_date - dt.timedelta(days=days - 1)
+    if start_dt or end_dt:
+        rows = [row for row in read_group_messages() if row_in_window(row, start_dt, end_dt)]
+    else:
+        rows = [
+            row for row in read_group_messages()
+            if (row_date := group_message_date(row)) and start_date <= row_date <= today_date
+        ]
+    rows = [row for row in rows if is_employee_task_chat(row)]
+    selected_rows = priority_sorted_rows(filter_summary_input_rows(rows), [])
+    selected_rows = selected_rows[:limit]
+    use_uzbek = False
+    label_start_dt, label_end_dt = (start_dt, end_dt) if start_dt and end_dt else default_summary_window(start_date, end_dt)
+    title_period = format_period_window(label_start_dt, label_end_dt, use_uzbek)
+    lines = [
+        f"📌 <b>Задачи сотрудникам за {escape_html(title_period)}</b>",
+        "━━━━━━━━━━━━",
+        f"🕘 Учитываю сообщения: <b>{escape_html(title_period)}</b>",
+        f"📨 Сообщений в чате задач: <b>{len(rows)}</b>",
+    ]
+    if not rows:
+        lines.extend(["", "За период нет сохраненных сообщений из чата «Задачи сотрудникам»."])
+        return "\n".join(lines)
+    if not selected_rows:
+        lines.extend(["", "За период есть только сообщения самого Фатхулло. Входящих поручений для напоминания не нашла."])
+        return "\n".join(lines)
+    summary = summarize_group_messages(config, selected_rows)
+    if summary:
+        lines.extend(["", link_group_titles_in_summary(config, format_summary_html(summary, use_uzbek), selected_rows)])
+    else:
+        lines.extend(["", "Коротко:"])
+        for row in selected_rows[:10]:
+            author = str(row.get("username") or row.get("first_name") or "участник").strip().lstrip("@")
+            text = compact_text(str(row.get("text") or ""), 220)
+            lines.append(f"- @{escape_html(author)} — {escape_html(text)}")
     return "\n".join(lines)
 
 
@@ -11281,6 +11352,9 @@ def process_text_command(
     if digest_id == "GROUP-IMPORTANT":
         days = parse_group_important_days(text)
         return {"digest_id": digest_id, "answer": build_group_important_message(config, days=days)}
+    if digest_id == "EMPLOYEE-TASK-SUMMARY":
+        days = parse_group_important_days(text)
+        return {"digest_id": digest_id, "answer": build_employee_task_summary_message(config, days=days)}
     if digest_id == "GROUPS":
         return {"digest_id": digest_id, "answer": build_groups_message()}
     if digest_id == "SEND-GROUP":
