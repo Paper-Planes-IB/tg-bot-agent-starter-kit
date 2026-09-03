@@ -8388,7 +8388,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         TG_MANAGEMENT_ROLE_CONTEXT_RU,
         TG_COMMUNICATION_STYLE_RU,
         "Не расписывай каждое сообщение. Обобщай только важные сигналы, задачи, риски и вопросы без ответа.",
-        "Дай максимум 1-3 важных сигнала и 1-4 задачи. Мелкие реплики, приветствия, битый текст и повторы отсекай.",
+        "Пройди по всем отправителям и чатам за выбранное окно. Мелкие реплики объединяй, но не выкидывай человека или группу молча, если там был смысловой сигнал.",
         "Каждый пункт темы, задачи или пинга начинай с отправителя. Для личных сообщений формат: '@username — ...'. Для групп формат: 'Группа <название> / @username — ...'.",
         "Не используй формулировки 'Подключенный чат', 'чат', 'личная переписка' без имени или username отправителя.",
         "Если в сообщениях есть эмоции, сомнения, тишина после обещания, конфликт, риск или скрытое поручение, явно вытащи это в вывод.",
@@ -8408,10 +8408,10 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "1 короткий абзац: главный смысл обсуждений, не больше 2 предложений.",
         "",
         "Важное:",
-        "- 1-3 главных сигнала. Формат для лички: '@username — что это значит и что делать'. Формат для группы: 'Группа Название / @username — что это значит и что делать'.",
+        "- главные сигналы по всем отправителям/чатам. Формат для лички: '@username — что это значит и что делать'. Формат для группы: 'Группа Название / @username — что это значит и что делать'.",
         "",
         "Задачи:",
-        "- 1-4 поручения. Формат: 'Ответственный — что сделать / срок, если есть'. Если задач нет, напиши: 'Явных задач не вижу.'",
+        "- все видимые поручения. Формат: 'Ответственный — что сделать / срок, если есть'. Если задач нет, напиши: 'Явных задач не вижу.'",
         "",
         "Что зависло:",
         "- вопросы без ответа, обещания без следующего шага, тишина после договорённости, риски с ответственными. Если ничего нет, напиши: 'Явных зависаний не вижу.'",
@@ -8492,7 +8492,7 @@ def filter_summary_input_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
 def build_group_important_message(
     config: AgentConfig,
     days: int = 1,
-    limit: int = 10,
+    limit: int = 200,
     start_dt: dt.datetime | None = None,
     end_dt: dt.datetime | None = None,
 ) -> str:
@@ -8509,7 +8509,7 @@ def build_group_important_message(
     captured = [row for row in rows if str(row.get("capture_reason") or "").strip()]
     group_priority_terms = priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
     source_rows = captured or rows
-    selected_rows = priority_sorted_rows(filter_summary_input_rows(source_rows), group_priority_terms)[:limit]
+    selected_rows = priority_sorted_rows(filter_summary_input_rows(source_rows), group_priority_terms)
     use_uzbek = False
     label_start_dt, label_end_dt = (start_dt, end_dt) if start_dt and end_dt else default_summary_window(start_date, end_dt)
     title_period = format_period_window(label_start_dt, label_end_dt, use_uzbek)
@@ -8600,7 +8600,7 @@ def business_message_source_label(row: dict[str, Any], index: int) -> str:
 def build_business_summary_message(
     config: AgentConfig,
     days: int = 1,
-    limit: int = 15,
+    limit: int = 200,
     start_dt: dt.datetime | None = None,
     end_dt: dt.datetime | None = None,
 ) -> str:
@@ -8615,7 +8615,7 @@ def build_business_summary_message(
             if (row_date := business_message_date(row)) and start_date <= row_date <= today_date
         ]
     business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
-    selected_rows = priority_sorted_rows(filter_summary_input_rows(rows), business_priority_terms)[:limit]
+    selected_rows = priority_sorted_rows(filter_summary_input_rows(rows), business_priority_terms)
     use_uzbek = False
     label_start_dt, label_end_dt = (start_dt, end_dt) if start_dt and end_dt else default_summary_window(start_date, end_dt)
     title_period = format_period_window(label_start_dt, label_end_dt, use_uzbek)
