@@ -8438,6 +8438,34 @@ def rows_contain_uzbek(rows: list[dict[str, Any]]) -> bool:
     return any(detect_text_language(str(row.get("text") or "")) == "uz" for row in rows)
 
 
+DEFAULT_SUMMARY_EXCLUDED_USERNAMES = "tggfathullo"
+DEFAULT_SUMMARY_EXCLUDED_USER_IDS = "5216141863"
+
+
+def summary_excluded_usernames() -> set[str]:
+    raw = os.environ.get("TG_AGENT_SUMMARY_EXCLUDED_USERNAMES", DEFAULT_SUMMARY_EXCLUDED_USERNAMES)
+    return {part.strip().lstrip("@").casefold() for part in raw.split(",") if part.strip()}
+
+
+def summary_excluded_user_ids() -> set[str]:
+    raw = os.environ.get("TG_AGENT_SUMMARY_EXCLUDED_USER_IDS", DEFAULT_SUMMARY_EXCLUDED_USER_IDS)
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def row_is_excluded_summary_author(row: dict[str, Any]) -> bool:
+    username = str(row.get("username") or "").strip().lstrip("@").casefold()
+    user_id = str(row.get("user_id") or "").strip()
+    if username and username in summary_excluded_usernames():
+        return True
+    if user_id and user_id in summary_excluded_user_ids():
+        return True
+    return False
+
+
+def filter_summary_input_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [row for row in rows if not row_is_excluded_summary_author(row)]
+
+
 def build_group_important_message(
     config: AgentConfig,
     days: int = 1,
@@ -8458,7 +8486,7 @@ def build_group_important_message(
     captured = [row for row in rows if str(row.get("capture_reason") or "").strip()]
     group_priority_terms = priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
     source_rows = captured or rows
-    selected_rows = priority_sorted_rows(source_rows, group_priority_terms)[:limit]
+    selected_rows = priority_sorted_rows(filter_summary_input_rows(source_rows), group_priority_terms)[:limit]
     use_uzbek = False
     title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
     title = f"Важное во внешних чатах за {title_period}"
@@ -8471,6 +8499,12 @@ def build_group_important_message(
     ]
     if not rows:
         lines.extend(["", "Bu davrda tashqi chatlardan saqlangan xabarlar yo'q." if use_uzbek else "За период нет сохраненных сообщений из внешних чатов."])
+        return "\n".join(lines)
+    if not selected_rows:
+        lines.extend([
+            "",
+            "За период есть только сообщения самого Фатхулло. Сообщений от других участников для сводки не нашла.",
+        ])
         return "\n".join(lines)
     chat_line = priority_chat_counts(rows, group_priority_terms, limit=5)
     lines.extend(["", f"📍 <b>{'Chatlar' if use_uzbek else 'Чаты'}</b>: {escape_html(chat_line)}"])
@@ -8573,7 +8607,7 @@ def build_business_summary_message(
             if (row_date := business_message_date(row)) and start_date <= row_date <= today_date
         ]
     business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
-    selected_rows = priority_sorted_rows(rows, business_priority_terms)[:limit]
+    selected_rows = priority_sorted_rows(filter_summary_input_rows(rows), business_priority_terms)[:limit]
     use_uzbek = False
     title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
     title = f"Личные business-чаты за {title_period}"
@@ -8588,6 +8622,12 @@ def build_business_summary_message(
             "",
             "Telegram Business'dan yangi xabarlar hali yo'q." if use_uzbek else "Новых сообщений из Telegram Business пока нет.",
             "Agar Fathullo avtomatizatsiyani ulagan bo'lsa, BotFather'dagi Secretary Mode va Telegram Business'dagi xabarlarni o'qish huquqini tekshiring." if use_uzbek else "Если Фатхулло уже подключил автоматизацию, проверьте Secretary Mode в BotFather и права чтения сообщений в Telegram Business.",
+        ])
+        return "\n".join(lines)
+    if not selected_rows:
+        lines.extend([
+            "",
+            "За период есть только сообщения самого Фатхулло. Входящих сообщений для сводки не нашла.",
         ])
         return "\n".join(lines)
     chat_line = priority_chat_counts(rows, business_priority_terms, limit=8)
