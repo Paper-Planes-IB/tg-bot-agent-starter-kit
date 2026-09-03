@@ -8346,7 +8346,8 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
             priority_label = "первый приоритет" if priority_rank(row, business_priority_terms) < len(business_priority_terms) else "остальные"
         else:
             source_label = f"Группа {chat_title} / @{author}" if author != "участник" else f"Группа {chat_title}"
-            priority_label = "первый приоритет" if priority_rank(row, group_priority_terms) < len(group_priority_terms) else "остальные"
+            group_terms = business_priority_terms + group_priority_terms
+            priority_label = "первый приоритет" if priority_rank(row, group_terms) < len(group_terms) else "остальные"
         reason = clean_capture_reason(str(row.get("capture_reason") or ""))
         chunks.append(
             f"[{idx}] {row.get('ts') or ''} / {priority_label} / {source_label} / {reason}\n{text}"
@@ -8517,7 +8518,10 @@ def build_group_important_message(
             if (row_date := group_message_date(row)) and start_date <= row_date <= today_date
         ]
     captured = [row for row in rows if str(row.get("capture_reason") or "").strip()]
-    group_priority_terms = priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
+    group_priority_terms = (
+        priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
+        + priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
+    )
     source_rows = captured or rows
     selected_rows = priority_sorted_rows(filter_summary_input_rows(source_rows), group_priority_terms)
     use_uzbek = False
