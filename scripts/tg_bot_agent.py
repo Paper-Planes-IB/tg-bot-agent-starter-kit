@@ -8228,14 +8228,6 @@ def group_message_source_label(config: AgentConfig, row: dict[str, Any], index: 
     chat_title = str(row.get("chat_title") or row.get("chat_id") or "чат")
     author = str(row.get("username") or row.get("first_name") or "участник").lstrip("@")
     label = f"[{index}] {chat_title} / @{author} / {ts}"
-    link = telegram_message_link(row)
-    if link:
-        return f'<a href="{escape_html(link)}">{escape_html(label)}</a>'
-    chat_id = str(row.get("chat_id") or "")
-    if chat_id and chat_id not in chat_links:
-        chat_links[chat_id] = telegram_chat_link(config, chat_id)
-    if chat_links.get(chat_id):
-        return f'<a href="{escape_html(chat_links[chat_id])}">{escape_html(label)}</a>'
     return escape_html(label)
 
 
