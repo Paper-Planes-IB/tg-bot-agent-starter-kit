@@ -8318,7 +8318,7 @@ TG_COMMUNICATION_STYLE_UZ = "\n".join([
 
 def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) -> str:
     uz_count = sum(1 for row in rows if detect_text_language(str(row.get("text") or "")) == "uz")
-    use_uzbek = uz_count > 0
+    use_uzbek = uz_count > 0 and uz_count == len(rows)
     chunks = []
     for idx, row in enumerate(rows, start=1):
         text = compact_text(str(row.get("text") or ""), 900)
@@ -8372,7 +8372,9 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Дай максимум 1-3 важных сигнала и 1-4 задачи. Мелкие реплики, приветствия, битый текст и повторы отсекай.",
         "Каждый пункт темы или пинга начинай с названия чата: 'Название чата — ...'. Если это личная переписка, пиши: 'Личный чат: Имя — ...'.",
         "Если в сообщениях есть эмоции, сомнения, тишина после обещания, конфликт, риск или скрытое поручение, явно вытащи это в вывод.",
-        "Пиши по-русски, живо и конкретно. Без markdown-таблиц, без канцелярита, без рекламного тона.",
+        "Каркас сводки и названия разделов пиши по-русски. Не переводи всю сводку на узбекский из-за одного узбекского сообщения.",
+        "Русские обсуждения суммируй на русском. Узбекские обсуждения суммируй на узбекском. Если пункт опирается на смешанные сообщения, выбери язык основного источника и не переводи цитаты, имена и короткие формулировки.",
+        "Пиши живо и конкретно. Без markdown-таблиц, без канцелярита, без рекламного тона.",
         "Названия разделов пиши ровно так, без эмоджи: Итог дня, Важное, Задачи, Что зависло, Кого пинговать.",
         "Каждый содержательный пункт должен ссылаться на источник в квадратных скобках, например [2].",
         "Не выдумывай факты, ответственных и решения. Если есть только намёк, пиши 'похоже' или 'нужно уточнить'.",
@@ -8455,13 +8457,9 @@ def build_group_important_message(
     group_priority_terms = priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
     source_rows = captured or rows
     selected_rows = priority_sorted_rows(source_rows, group_priority_terms)[:limit]
-    use_uzbek = rows_contain_uzbek(selected_rows)
-    if use_uzbek:
-        title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
-        title = f"Tashqi chatlardagi muhim xabarlar: {title_period}"
-    else:
-        title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
-        title = f"Важное во внешних чатах за {title_period}"
+    use_uzbek = False
+    title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
+    title = f"Важное во внешних чатах за {title_period}"
     lines = [
         f"📌 <b>{escape_html(title)}</b>",
         "━━━━━━━━━━━━",
@@ -8574,13 +8572,9 @@ def build_business_summary_message(
         ]
     business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
     selected_rows = priority_sorted_rows(rows, business_priority_terms)[:limit]
-    use_uzbek = rows_contain_uzbek(selected_rows)
-    if use_uzbek:
-        title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
-        title = f"Shaxsiy business-chatlar: {title_period}"
-    else:
-        title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
-        title = f"Личные business-чаты за {title_period}"
+    use_uzbek = False
+    title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
+    title = f"Личные business-чаты за {title_period}"
     lines = [
         f"📌 <b>{escape_html(title)}</b>",
         "━━━━━━━━━━━━",
