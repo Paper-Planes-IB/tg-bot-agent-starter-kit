@@ -69,7 +69,7 @@ CLICKUP_TEAM_ID = os.environ.get("CLICKUP_TEAM_ID", "")
 CLICKUP_LIST_ID = os.environ.get("CLICKUP_LIST_ID", "")
 CLICKUP_LIST_NAME = os.environ.get("CLICKUP_LIST_NAME", "ОГ")
 CLICKUP_TELEGRAM_USER_MAP = os.environ.get("CLICKUP_TELEGRAM_USER_MAP", "")
-DEFAULT_PRIORITY_BUSINESS_CHATS = "Мухрим Абдулазизов,Муборак,Мохинул,Абдуазиз"
+DEFAULT_PRIORITY_BUSINESS_CHATS = "Мухрим Абдулазизов,Мухрим,Mukhrim,Muxrim,Мохинур,Мохинул,Махинур,Mohinur,Mahinur,Нозима,Nozima,Муборак,Muborak,Азиз,Aziz,Абдулазиз,Abduaziz,Малика Абдулазизова,Malika Abdulazizova,руководитель,директор,CEO,СЕО"
 DEFAULT_PRIORITY_GROUP_CHATS = "TG-PP,TG+PP,Опер группа,ОГ"
 CALL_RECORDING_EXTENSIONS = {".mp3", ".m4a", ".wav", ".ogg", ".oga", ".opus", ".aac", ".flac", ".mp4", ".mov", ".webm"}
 COMPETITOR_SOURCES_FILE = DATA_DIR / "tg_agent_competitors.json"
@@ -8333,6 +8333,8 @@ TG_COMMUNICATION_STYLE_UZ = "\n".join([
 
 def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) -> str:
     use_uzbek = False
+    business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
+    group_priority_terms = priority_terms("TG_AGENT_PRIORITY_GROUP_CHATS", DEFAULT_PRIORITY_GROUP_CHATS)
     chunks = []
     for idx, row in enumerate(rows, start=1):
         text = compact_text(str(row.get("text") or ""), 900)
@@ -8341,11 +8343,13 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         source = str(row.get("source") or "").strip()
         if source == "telegram_business":
             source_label = f"Личный чат: @{author}" if author != "участник" else f"Личный чат: {chat_title}"
+            priority_label = "первый приоритет" if priority_rank(row, business_priority_terms) < len(business_priority_terms) else "остальные"
         else:
             source_label = f"Группа {chat_title} / @{author}" if author != "участник" else f"Группа {chat_title}"
+            priority_label = "первый приоритет" if priority_rank(row, group_priority_terms) < len(group_priority_terms) else "остальные"
         reason = clean_capture_reason(str(row.get("capture_reason") or ""))
         chunks.append(
-            f"[{idx}] {row.get('ts') or ''} / {source_label} / {reason}\n{text}"
+            f"[{idx}] {row.get('ts') or ''} / {priority_label} / {source_label} / {reason}\n{text}"
         )
     if use_uzbek:
         prompt = "\n\n".join([
@@ -8399,7 +8403,9 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Информацию по конкретному чату пиши на языке этого чата: русский чат — русский пункт, узбекский чат — узбекский пункт. Если пункт объединяет несколько чатов на разных языках, раздели его по чатам.",
         "Не переводи цитаты, имена, короткие формулировки и названия чатов.",
         "Пиши живо и конкретно. Без markdown-таблиц, без канцелярита, без рекламного тона.",
-        "Названия разделов пиши ровно так, без эмоджи: Итог дня, Важное, Задачи, Что зависло, Кого пинговать.",
+        "Первый приоритет: Мухрим, Мохинур, Нозима, Муборак, Азиз, Абдулазиз, Малика Абдулазизова и другие руководители. Их сообщения обязательно отражай в разделе 'Важное', если там есть смысловой сигнал.",
+        "Остальных отправителей отражай ниже в отдельном разделе 'Другие чаты': укажи именно ники людей и краткий смысл, без длинного пересказа.",
+        "Названия разделов пиши ровно так, без эмоджи: Итог дня, Важное, Другие чаты, Задачи, Что зависло, Кого пинговать.",
         "Внутренние номера источников используй только для проверки фактов. В ответе не ставь ссылки вида [1], [2].",
         "Не выдумывай факты, ответственных и решения. Если есть только намёк, пиши 'похоже' или 'нужно уточнить'.",
         "",
@@ -8408,7 +8414,10 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "1 короткий абзац: главный смысл обсуждений, не больше 2 предложений.",
         "",
         "Важное:",
-        "- главные сигналы по всем отправителям/чатам. Формат для лички: '@username — что это значит и что делать'. Формат для группы: 'Группа Название / @username — что это значит и что делать'.",
+        "- сигналы первого приоритета. Формат для лички: '@username — что это значит и что делать'. Формат для группы: 'Группа Название / @username — что это значит и что делать'.",
+        "",
+        "Другие чаты:",
+        "- остальные отправители. Обязательно указывай ник: '@username — краткий смысл'. Если смысловых сообщений нет, напиши: 'Смысловых сигналов нет.'",
         "",
         "Задачи:",
         "- все видимые поручения. Формат: 'Ответственный — что сделать / срок, если есть'. Если задач нет, напиши: 'Явных задач не вижу.'",
@@ -8445,6 +8454,7 @@ def format_summary_html(summary: str, use_uzbek: bool) -> str:
     } if use_uzbek else {
         "Итог дня:": "🧭 <b>Итог дня</b>",
         "Важное:": "🔥 <b>Важное</b>",
+        "Другие чаты:": "💬 <b>Другие чаты</b>",
         "О чём говорили:": "💬 <b>О чём говорили</b>",
         "Задачи:": "✅ <b>Задачи</b>",
         "Что решили:": "✅ <b>Что решили</b>",
@@ -8530,8 +8540,6 @@ def build_group_important_message(
             "За период есть только сообщения самого Фатхулло. Сообщений от других участников для сводки не нашла.",
         ])
         return "\n".join(lines)
-    chat_line = priority_chat_counts(rows, group_priority_terms, limit=5)
-    lines.extend(["", f"📍 <b>{'Chatlar' if use_uzbek else 'Чаты'}</b>: {escape_html(chat_line)}"])
     summary = summarize_group_messages(config, selected_rows)
     if summary:
         lines.extend(["", format_summary_html(summary, use_uzbek)])
@@ -8639,8 +8647,6 @@ def build_business_summary_message(
             "За период есть только сообщения самого Фатхулло. Входящих сообщений для сводки не нашла.",
         ])
         return "\n".join(lines)
-    chat_line = priority_chat_counts(rows, business_priority_terms, limit=8)
-    lines.extend(["", f"📍 <b>{'Chatlar' if use_uzbek else 'Чаты'}</b>: {escape_html(chat_line)}"])
     summary = summarize_group_messages(config, selected_rows)
     if summary:
         lines.extend(["", format_summary_html(summary, use_uzbek)])
