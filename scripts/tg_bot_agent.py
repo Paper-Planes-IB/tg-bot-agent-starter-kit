@@ -8339,7 +8339,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
             "Agar xabarlarda emotsiya, shubha, va'dadan keyin jimlik, konflikt, risk yoki yashirin topshiriq bo'lsa, buni alohida ko'rsat.",
             "O'zbek tilida yoz. Matn aniq, jonli va ishga yaroqli bo'lsin. Markdown jadval ishlatma.",
             "Bo'lim nomlarini aynan shunday yoz, emojisiz: Kun yakuni, Muhim narsalar, Vazifalar, Nima to'xtab qoldi, Kimga yozish kerak.",
-            "Har bir mazmunli bandda manbaga kvadrat qavs bilan havola ber, masalan [2].",
+            "Ichki manba raqamlaridan faqat faktlarni tekshirish uchun foydalan. Javob matnida [1], [2] kabi havolalarni yozma.",
             "Fakt, mas'ul yoki qarorni o'ylab topma. Faqat ishora bo'lsa, 'shekilli' yoki 'aniqlashtirish kerak' deb yoz.",
             "",
             "Javob strukturasi qat'iy:",
@@ -8347,10 +8347,10 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
             "1 qisqa abzas: muhokamalarning asosiy ma'nosi, 2 gapdan oshmasin.",
             "",
             "Muhim narsalar:",
-            "- 1-3 eng muhim signal. Format: 'Chat nomi — nimani anglatadi va nima qilish kerak [manba]'.",
+            "- 1-3 eng muhim signal. Format: 'Chat nomi — nimani anglatadi va nima qilish kerak'.",
             "",
             "Vazifalar:",
-            "- 1-4 topshiriq. Format: 'Mas'ul — nima qilishi kerak / muddat bo'lsa yoz / manba'. Vazifa bo'lmasa: 'Aniq vazifalar ko'rinmayapti.'",
+            "- 1-4 topshiriq. Format: 'Mas'ul — nima qilishi kerak / muddat bo'lsa yoz'. Vazifa bo'lmasa: 'Aniq vazifalar ko'rinmayapti.'",
             "",
             "Nima to'xtab qoldi:",
             "- javobsiz savollar, keyingi qadamsiz va'dalar, kelishuvdan keyingi jimlik, mas'ullar bilan risklar. Hech narsa bo'lmasa: 'Aniq to'xtab qolgan masala ko'rinmayapti.'",
@@ -8378,7 +8378,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Не переводи цитаты, имена, короткие формулировки и названия чатов.",
         "Пиши живо и конкретно. Без markdown-таблиц, без канцелярита, без рекламного тона.",
         "Названия разделов пиши ровно так, без эмоджи: Итог дня, Важное, Задачи, Что зависло, Кого пинговать.",
-        "Каждый содержательный пункт должен ссылаться на источник в квадратных скобках, например [2].",
+        "Внутренние номера источников используй только для проверки фактов. В ответе не ставь ссылки вида [1], [2].",
         "Не выдумывай факты, ответственных и решения. Если есть только намёк, пиши 'похоже' или 'нужно уточнить'.",
         "",
         "Структура ответа строго такая:",
@@ -8386,10 +8386,10 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "1 короткий абзац: главный смысл обсуждений, не больше 2 предложений.",
         "",
         "Важное:",
-        "- 1-3 главных сигнала. Формат: 'Название чата — что это значит и что делать [источник]'.",
+        "- 1-3 главных сигнала. Формат: 'Название чата — что это значит и что делать'.",
         "",
         "Задачи:",
-        "- 1-4 поручения. Формат: 'Ответственный — что сделать / срок, если есть / источник'. Если задач нет, напиши: 'Явных задач не вижу.'",
+        "- 1-4 поручения. Формат: 'Ответственный — что сделать / срок, если есть'. Если задач нет, напиши: 'Явных задач не вижу.'",
         "",
         "Что зависло:",
         "- вопросы без ответа, обещания без следующего шага, тишина после договорённости, риски с ответственными. Если ничего нет, напиши: 'Явных зависаний не вижу.'",
@@ -8408,7 +8408,8 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
 
 
 def format_summary_html(summary: str, use_uzbek: bool) -> str:
-    escaped = escape_html(summary.strip())
+    summary = re.sub(r"\s*\[(?:\d+)(?:\]\s*\[|\]\[|\s*,\s*|\s*)*\d*\]", "", summary.strip())
+    escaped = escape_html(summary)
     replacements = {
         "Kun yakuni:": "🧭 <b>Kun yakuni</b>",
         "Muhim narsalar:": "🔥 <b>Muhim narsalar</b>",
@@ -8516,22 +8517,6 @@ def build_group_important_message(
         for idx, row in enumerate(selected_rows, start=1):
             text = compact_text(str(row.get("text") or ""), 220)
             lines.append(f"- [{idx}] {escape_html(text)}")
-    source_limit = min(len(selected_rows), 4)
-    lines.extend(["", "━━━━━━━━━━━━", f"🔎 <b>{'Asosiy manbalar' if use_uzbek else 'Основные источники'}</b>"])
-    chat_links: dict[str, str] = {}
-    for idx, row in enumerate(selected_rows[:source_limit], start=1):
-        reason = clean_capture_reason(str(row.get("capture_reason") or ""))
-        text = compact_text(str(row.get("text") or ""), 90)
-        reason_part = f" / {escape_html(reason)}" if reason else ""
-        lines.append(f"- {group_message_source_label(config, row, idx, chat_links)}: {escape_html(text)}{reason_part}")
-    if len(selected_rows) > source_limit:
-        shown_word = "Manba ko'rsatildi" if use_uzbek else "Источников показано"
-        shown_sep = "dan" if use_uzbek else "из"
-        lines.append(f"{shown_word} {source_limit} {shown_sep} {len(selected_rows)}.")
-    elif len(source_rows) > limit:
-        shown_word = "Ko'rsatilgan" if use_uzbek else "Показано"
-        shown_sep = "dan" if use_uzbek else "из"
-        lines.append(f"{shown_word} {limit} {shown_sep} {len(source_rows)}.")
     return "\n".join(lines)
 
 
@@ -8640,19 +8625,6 @@ def build_business_summary_message(
         for idx, row in enumerate(selected_rows, start=1):
             text = compact_text(str(row.get("text") or ""), 220)
             lines.append(f"- [{idx}] {escape_html(text)}")
-    source_limit = min(len(selected_rows), 4)
-    lines.extend(["", "━━━━━━━━━━━━", f"🔎 <b>{'Asosiy manbalar' if use_uzbek else 'Основные источники'}</b>"])
-    for idx, row in enumerate(selected_rows[:source_limit], start=1):
-        text = compact_text(str(row.get("text") or ""), 90)
-        lines.append(f"- {business_message_source_label(row, idx)}: {escape_html(text)}")
-    if len(selected_rows) > source_limit:
-        shown_word = "Manba ko'rsatildi" if use_uzbek else "Источников показано"
-        shown_sep = "dan" if use_uzbek else "из"
-        lines.append(f"{shown_word} {source_limit} {shown_sep} {len(selected_rows)}.")
-    elif len(rows) > limit:
-        shown_word = "Ko'rsatilgan" if use_uzbek else "Показано"
-        shown_sep = "dan" if use_uzbek else "из"
-        lines.append(f"{shown_word} {limit} {shown_sep} {len(rows)}.")
     return "\n".join(lines)
 
 
