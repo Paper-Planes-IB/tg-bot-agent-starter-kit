@@ -45,6 +45,7 @@ STATE_FILE = DATA_DIR / "tg_dashboard_agent_state.json"
 LOCK_FILE = DATA_DIR / "tg_dashboard_agent.lock"
 INBOX_FILE = DATA_DIR / "tg_agent_inbox.jsonl"
 GROUP_MESSAGES_FILE = DATA_DIR / "tg_group_messages.jsonl"
+GROUP_TOPICS_FILE = DATA_DIR / "tg_group_topics.json"
 BUSINESS_MESSAGES_FILE = DATA_DIR / "tg_business_messages.jsonl"
 BUSINESS_CONNECTIONS_FILE = DATA_DIR / "tg_business_connections.jsonl"
 CALL_RECORDINGS_FILE = DATA_DIR / "tg_call_recordings.jsonl"
@@ -71,6 +72,7 @@ CLICKUP_LIST_NAME = os.environ.get("CLICKUP_LIST_NAME", "ОГ")
 CLICKUP_TELEGRAM_USER_MAP = os.environ.get("CLICKUP_TELEGRAM_USER_MAP", "")
 DEFAULT_PRIORITY_BUSINESS_CHATS = "Мухрим Абдулазизов,Мухрим,Mukhrim,Muxrim,Мохинур,Мохинул,Махинур,Mohinur,Mahinur,Нозима,Nozima,Муборак,Muborak,Азиз,Aziz,Абдулазиз,Abduaziz,Малика Абдулазизова,Malika Abdulazizova,руководитель,директор,CEO,СЕО"
 DEFAULT_PRIORITY_GROUP_CHATS = "TG-PP,TG+PP,Опер группа,ОГ"
+DEFAULT_OPER_TOPIC_PRIORITY_TERMS = "маркетплейс,marketplace,mp,мп,it,айти,тех,баг,bug,продажи,продаж,sales,выручка,заказ,лид"
 CALL_RECORDING_EXTENSIONS = {".mp3", ".m4a", ".wav", ".ogg", ".oga", ".opus", ".aac", ".flac", ".mp4", ".mov", ".webm"}
 COMPETITOR_SOURCES_FILE = DATA_DIR / "tg_agent_competitors.json"
 TG_AGENT_COMPETITOR_SOURCES = os.environ.get("TG_AGENT_COMPETITOR_SOURCES", "")
@@ -3604,6 +3606,8 @@ def run_self_tests(config: AgentConfig) -> dict[str, Any]:
     checks.append(test_check("voice prompt available", lambda: voice_prompt_available(config)))
     checks.append(test_check("voice status message", lambda: "Voice status" in build_digest_message(config, "VOICE-STATUS")))
     checks.append(test_check("voice help message", lambda: "Как говорить" in build_digest_message(config, "VOICE-HELP")))
+    checks.append(test_check("group topic label", lambda: group_topic_label({"message_thread_id": 42}) == "тема #42"))
+    checks.append(test_check("oper topic inference", lambda: infer_oper_topic_name("Опер группа (ОГ)", "ошибка в amo") == "IT"))
     return {"ok": all(item["ok"] for item in checks), "checks": checks}
 
 
@@ -3647,6 +3651,87 @@ def append_group_message(message: dict[str, Any]) -> Path:
     with GROUP_MESSAGES_FILE.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(message, ensure_ascii=False, sort_keys=True) + "\n")
     return GROUP_MESSAGES_FILE
+
+
+def read_group_topics() -> dict[str, str]:
+    if not GROUP_TOPICS_FILE.exists():
+        return {}
+    try:
+        raw = read_json(GROUP_TOPICS_FILE)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key): str(value) for key, value in raw.items() if str(value).strip()}
+
+
+def write_group_topics(topics: dict[str, str]) -> None:
+    GROUP_TOPICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with GROUP_TOPICS_FILE.open("w", encoding="utf-8") as fh:
+        json.dump(topics, fh, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def group_topic_cache_key(chat_id: Any, thread_id: Any) -> str:
+    return f"{str(chat_id).strip()}:{str(thread_id).strip()}"
+
+
+def cached_group_topic_name(chat_id: Any, thread_id: Any) -> str:
+    if not str(chat_id).strip() or not str(thread_id).strip():
+        return ""
+    return read_group_topics().get(group_topic_cache_key(chat_id, thread_id), "")
+
+
+def update_group_topic_cache(chat_id: Any, thread_id: Any, topic_name: str) -> None:
+    chat_id_text = str(chat_id).strip()
+    thread_id_text = str(thread_id).strip()
+    topic_name = compact_spaces(topic_name)
+    if not chat_id_text or not thread_id_text or not topic_name:
+        return
+    topics = read_group_topics()
+    key = group_topic_cache_key(chat_id_text, thread_id_text)
+    if topics.get(key) == topic_name:
+        return
+    topics[key] = topic_name
+    write_group_topics(topics)
+
+
+def message_topic_name(message: dict[str, Any]) -> str:
+    for key in ("forum_topic_created", "forum_topic_edited"):
+        value = message.get(key) or {}
+        if isinstance(value, dict) and value.get("name"):
+            return compact_spaces(str(value.get("name") or ""))
+    reply = message.get("reply_to_message") or {}
+    if isinstance(reply, dict):
+        for key in ("forum_topic_created", "forum_topic_edited"):
+            value = reply.get(key) or {}
+            if isinstance(value, dict) and value.get("name"):
+                return compact_spaces(str(value.get("name") or ""))
+    return ""
+
+
+def infer_oper_topic_name(chat_title: str, text: str) -> str:
+    if group_summary_context(chat_title) != "group_type:operational_hq":
+        return ""
+    haystack = normalize_text(text)
+    if any(term in haystack for term in ("маркетплейс", "marketplace", "mp ", " мп", "озон", "wildberries", "вайлдбер")):
+        return "маркетплейс"
+    if any(term in haystack for term in (" it ", "айти", "тех", "баг", "bug", "ошибка", "сбой", "amo", "амo", "ох", "ox")):
+        return "IT"
+    if any(term in haystack for term in ("продаж", "sales", "выруч", "заказ", "лид", "клиент", "заявк")):
+        return "продажи"
+    return ""
+
+
+def group_topic_from_message(chat_id: Any, chat_title: str, message: dict[str, Any], text: str) -> dict[str, str]:
+    thread_id = str(message.get("message_thread_id") or "").strip()
+    topic_name = message_topic_name(message)
+    if thread_id and topic_name:
+        update_group_topic_cache(chat_id, thread_id, topic_name)
+    if thread_id and not topic_name:
+        topic_name = cached_group_topic_name(chat_id, thread_id)
+    if not topic_name:
+        topic_name = infer_oper_topic_name(chat_title, text)
+    return {"message_thread_id": thread_id, "topic_name": topic_name}
 
 
 def append_business_connection(connection: dict[str, Any]) -> Path:
@@ -8361,6 +8446,30 @@ def group_summary_context(chat_title: str) -> str:
     return "group_type:other"
 
 
+def group_topic_label(row: dict[str, Any]) -> str:
+    topic_name = compact_spaces(str(row.get("topic_name") or row.get("forum_topic_name") or ""))
+    if topic_name:
+        return topic_name
+    thread_id = str(row.get("message_thread_id") or "").strip()
+    if thread_id:
+        return f"тема #{thread_id}"
+    return ""
+
+
+def group_topic_priority_label(row: dict[str, Any]) -> str:
+    if group_summary_context(str(row.get("chat_title") or "")) != "group_type:operational_hq":
+        return "oper_topic:other_group"
+    haystack = row_search_text(row)
+    topic_label = group_topic_label(row)
+    if any(term in haystack for term in ("маркетплейс", "marketplace", "mp", "мп")):
+        return f"oper_topic:маркетплейс:{topic_label or 'по тексту'}"
+    if any(term in haystack for term in ("it", "айти", "тех", "баг", "bug", "ошибка", "сбой")):
+        return f"oper_topic:IT:{topic_label or 'по тексту'}"
+    if any(term in haystack for term in ("продаж", "sales", "выруч", "заказ", "лид", "клиент")):
+        return f"oper_topic:продажи:{topic_label or 'по тексту'}"
+    return f"oper_topic:другое:{topic_label or 'нет темы'}"
+
+
 def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) -> str:
     use_uzbek = False
     business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
@@ -8377,9 +8486,12 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
             source_label = f"Личный чат: @{author}" if author != "участник" else f"Личный чат: {chat_title}"
             priority_label = "первый приоритет" if priority_rank(row, business_priority_terms) < len(business_priority_terms) else "остальные"
         else:
-            source_label = f"Группа {chat_title} / @{author}" if author != "участник" else f"Группа {chat_title}"
+            topic_label = group_topic_label(row)
+            topic_part = f" / тема {topic_label}" if topic_label else ""
+            source_label = f"Группа {chat_title}{topic_part} / @{author}" if author != "участник" else f"Группа {chat_title}{topic_part}"
             group_terms = business_priority_terms + group_priority_terms
             priority_label = "первый приоритет" if priority_rank(row, group_terms) < len(group_terms) else "остальные"
+            priority_label = f"{priority_label} / {group_topic_priority_label(row)}"
         reason = clean_capture_reason(str(row.get("capture_reason") or ""))
         chunks.append(
             f"[{idx}] {row.get('ts') or ''} / language:{row_language} / {priority_label} / {group_context} / {source_label} / {reason}\n{text}"
@@ -8429,7 +8541,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Пиши по логике пирамиды Минто: сначала главный вывод, затем независимые блоки. Соблюдай MECE: блоки не должны повторять одну и ту же мысль.",
         "Перед финальным ответом проверь дубли: если одна идея уже есть в 'Важное', не повторяй ее в 'Что зависло' теми же словами. В 'Задачи' оставь только действие, без повторного объяснения проблемы.",
         "Сводка должна быть полной, но емкой: каждое событие попадает в один самый подходящий раздел, а не размазывается по четырем блокам.",
-        "Каждый пункт темы, задачи или пинга начинай с отправителя. Для личных сообщений формат: '@username — ...'. Для групп формат: 'Группа <название> / @username — ...'.",
+        "Каждый пункт темы, задачи или пинга начинай с отправителя. Для личных сообщений формат: '@username — ...'. Для групп формат: 'Группа <название> / тема <тема> / @username — ...'. Если темы нет, формат: 'Группа <название> / @username — ...'.",
         "Не используй формулировки 'Подключенный чат', 'чат', 'личная переписка' без имени или username отправителя.",
         "Если в сообщениях есть эмоции, сомнения, тишина после обещания, конфликт, риск или скрытое поручение, явно вытащи это в вывод.",
         "Каркас сводки и названия разделов пиши по-русски. Не переводи всю сводку на узбекский из-за одного узбекского сообщения.",
@@ -8444,6 +8556,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Остальных отправителей отражай ниже в отдельном разделе 'Другие чаты': укажи именно ники людей и краткий смысл, без длинного пересказа.",
         "Для разных групп применяй разные акценты:",
         "- Опер группа (ОГ): это самая важная группа. Вытащи задачи по темам, важные уведомления, решения, блокеры и кому нужен следующий шаг.",
+        "- В Опер группе самые важные темы: маркетплейс, IT и продажи. Если такие темы есть, выводи их в 'Важное' первыми и обязательно указывай тему рядом с названием группы.",
         "- Toshkent Gullari чат: это общий чат компании. Бери только важные уведомления, прямые упоминания @tggfathullo и сообщения, где явно нужен следующий шаг Фатхулло. Обычную болтовню и операционный шум пропускай.",
         "- TG-OX Админ и TG-PP: это чаты с внешними консультантами. Держи фокус на ходе диалога, подвисших вопросах, обещаниях без ответа, следующих пингах.",
         "- OX вопросы и amo: присылай баги, ошибки, сбои, проблемы доступа, неправильные данные, неработающие сценарии и кто должен исправить.",
@@ -8462,7 +8575,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "1 короткий абзац: главный смысл обсуждений, не больше 2 предложений.",
         "",
         "Важное:",
-        "- сигналы первого приоритета. Формат для лички: '@username — что это значит и что делать'. Формат для группы: 'Группа Название / @username — что это значит и что делать'.",
+        "- сигналы первого приоритета. Формат для лички: '@username — что это значит и что делать'. Формат для группы: 'Группа Название / тема Тема / @username — что это значит и что делать'. Если темы нет: 'Группа Название / @username — ...'.",
         "",
         "Другие чаты:",
         "- остальные отправители. Обязательно указывай ник: '@username — краткий смысл'. Если смысловых сообщений нет, напиши: 'Смысловых сигналов нет.'",
@@ -8474,7 +8587,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "- вопросы без ответа, обещания без следующего шага, тишина после договорённости, риски с ответственными. Если ничего нет, напиши: 'Явных зависаний не вижу.'",
         "",
         "Кого пинговать:",
-        "- @username или 'Группа Название / @username' — зачем пинговать. Если по сообщениям неясно, напиши: 'Неясно, нужен ручной выбор ответственного.'",
+        "- @username или 'Группа Название / тема Тема / @username' — зачем пинговать. Если темы нет: 'Группа Название / @username'. Если по сообщениям неясно, напиши: 'Неясно, нужен ручной выбор ответственного.'",
         "",
         "Сообщения:",
         "\n\n".join(chunks),
@@ -8643,9 +8756,12 @@ def row_search_text(row: dict[str, Any]) -> str:
     return normalize_text(" ".join(str(row.get(key) or "") for key in (
         "chat_title",
         "chat_username",
+        "topic_name",
+        "message_thread_id",
         "first_name",
         "last_name",
         "username",
+        "text",
     )))
 
 
@@ -10620,6 +10736,10 @@ def strip_html_tags(text: str) -> str:
     return text
 
 
+def compact_spaces(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
 def build_batch_markdown_report(result: dict[str, Any], source: Path | None = None) -> str:
     lines = ["# TG Dashboard Bot batch dry-run"]
     if source:
@@ -10820,12 +10940,15 @@ def handle_update(config: AgentConfig, update: dict[str, Any]) -> None:
         if is_group_chat(chat) and reply_context.get("force_brain_dialog"):
             capture_reason = "reply_to_bot"
         if is_group_chat(chat):
+            topic = group_topic_from_message(chat_id, chat.get("title") or "", message, text)
             append_group_message({
                 "ts": dt.datetime.now().isoformat(timespec="seconds"),
                 "chat_id": chat_id,
                 "chat_title": chat.get("title") or "",
                 "chat_username": chat.get("username") or "",
                 "message_id": message_id,
+                "message_thread_id": topic.get("message_thread_id") or "",
+                "topic_name": topic.get("topic_name") or "",
                 "user_id": user_id,
                 "username": user.get("username") or "",
                 "first_name": user.get("first_name") or "",
