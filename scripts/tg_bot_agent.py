@@ -8339,8 +8339,12 @@ TG_COMMUNICATION_STYLE_UZ = "\n".join([
 
 def group_summary_context(chat_title: str) -> str:
     normalized = normalize_text(chat_title)
+    if "toshkent gullari чат" in normalized or normalized == "toshkent gullari" or "общий чат компании" in normalized:
+        return "group_type:company_general"
     if "опер" in normalized or normalized == "ог" or " ог" in normalized:
         return "group_type:operational_hq"
+    if "ox вопросы" in normalized or "ох вопросы" in normalized or "amo" in normalized:
+        return "group_type:bugs_errors"
     if "tg-ox" in normalized or "tg ox" in normalized or "tg-pp" in normalized or "tg pp" in normalized or "tg+pp" in normalized:
         return "group_type:external_consultants"
     if "ecom" in normalized or "e-commerce" in normalized or "e commerce" in normalized:
@@ -8349,6 +8353,9 @@ def group_summary_context(chat_title: str) -> str:
         return "group_type:mp_team"
     if "it team" in normalized or normalized.startswith("it ") or " ит " in normalized:
         return "group_type:it_team"
+    if "продаж" in normalized or "sales" in normalized or "сейл" in normalized or "заказ" in normalized or "order" in normalized:
+        if "guul" not in normalized:
+            return "group_type:sales_team"
     if "флористика" in normalized or "gourmet" in normalized or "decor" in normalized or "guul" in normalized or "гурме" in normalized:
         return "group_type:brief_digest"
     return "group_type:other"
@@ -8434,9 +8441,12 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Остальных отправителей отражай ниже в отдельном разделе 'Другие чаты': укажи именно ники людей и краткий смысл, без длинного пересказа.",
         "Для разных групп применяй разные акценты:",
         "- Опер группа (ОГ): это самая важная группа. Вытащи задачи по темам, важные уведомления, решения, блокеры и кому нужен следующий шаг.",
+        "- Toshkent Gullari чат: это общий чат компании. Бери только важные уведомления, прямые упоминания @tggfathullo и сообщения, где явно нужен следующий шаг Фатхулло. Обычную болтовню и операционный шум пропускай.",
         "- TG-OX Админ и TG-PP: это чаты с внешними консультантами. Держи фокус на ходе диалога, подвисших вопросах, обещаниях без ответа, следующих пингах.",
+        "- OX вопросы и amo: присылай баги, ошибки, сбои, проблемы доступа, неправильные данные, неработающие сценарии и кто должен исправить.",
         "- Ecom team: дай сводку по продажам, если в сообщениях есть продажи/заявки/суммы/заказы; отдельно отметь просадки, срочные контакты и вопросы.",
         "- MP team: дай сводку по количеству продаж, если в сообщениях есть продажи/заказы/цифры; отдельно отметь аномалии и вопросы.",
+        "- Любые группы по продажам: дай короткую сводку продаж, суммы/количество, аномалии, просадки, срочные заказы и вопросы без ответа.",
         "- IT team: дай короткую сводку и подвисшие вопросы, без длинного пересказа.",
         "- Флористика - Руководители, Gourmet/Decor - продажа, Guul заказы и похожие рабочие группы: дай только короткую выжимку, без глубокой аналитики.",
         "- Для любых остальных групп: тоже только короткая выжимка, смысловые сигналы, задачи и риски.",
