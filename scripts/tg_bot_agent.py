@@ -8610,7 +8610,7 @@ def build_group_important_message(
     lines = [
         f"📌 <b>{escape_html(title)}</b>",
         "━━━━━━━━━━━━",
-        f"🕘 {'Davr' if use_uzbek else 'Период'}: <b>{escape_html(title_period)}</b>",
+        f"🕘 {'Xabarlar davri' if use_uzbek else 'Учитываю сообщения'}: <b>{escape_html(title_period)}</b>",
         f"📨 {'Ulangan chatlardagi xabarlar' if use_uzbek else 'Сообщений в подключенных чатах'}: <b>{len(rows)}</b>",
         f"⭐ {'Muhim deb ajratilgan' if use_uzbek else 'Захвачено как важное'}: <b>{len(captured)}</b>",
     ]
@@ -8714,7 +8714,7 @@ def build_business_summary_message(
     lines = [
         f"📌 <b>{escape_html(title)}</b>",
         "━━━━━━━━━━━━",
-        f"🕘 {'Davr' if use_uzbek else 'Период'}: <b>{escape_html(title_period)}</b>",
+        f"🕘 {'Xabarlar davri' if use_uzbek else 'Учитываю сообщения'}: <b>{escape_html(title_period)}</b>",
         f"📨 {'Xabarlar' if use_uzbek else 'Сообщений'}: <b>{len(rows)}</b>",
     ]
     if not rows:
