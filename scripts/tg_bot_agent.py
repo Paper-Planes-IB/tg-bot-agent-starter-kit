@@ -3596,6 +3596,8 @@ def run_self_tests(config: AgentConfig) -> dict[str, Any]:
     checks.append(test_check("triage reminder extraction", lambda: triage_segments("напомни завтра 09:00 проверить источники", {"kind": "voice"})[0][1].get("type") == "reminder"))
     checks.append(test_check("voice digest preview", lambda: "Предпросмотр голосового разбора" in build_voice_digest_preview_message("голосовой разбор задача проверить чеки", {"kind": "voice"})))
     checks.append(test_check("auto voice digest heuristic", lambda: should_auto_voice_digest("нужно проверить чеки\nриск нет amo", {"kind": "voice"})))
+    checks.append(test_check("video note speech media", lambda: transcribable_speech_media({"video_note": {"file_id": "abc", "duration": 2}}).get("kind") == "video_note"))
+    checks.append(test_check("video note media id", lambda: best_media_file_id({"video_note": {"file_id": "abc", "duration": 2}}) == "abc"))
     checks.append(test_check("dedup key", lambda: dedup_key({"type": "note", "text": " Проверить  чеки "}) == dedup_key({"type": "note", "text": "проверить чеки"})))
     checks.append(test_check("sheet dry-run", lambda: sync_inbox_to_sheet(config, rows=[], dry_run=True).get("ok") is True))
     checks.append(test_check("voice command available", lambda: voice_command_available(config)))
@@ -3752,6 +3754,10 @@ def call_recording_media(message: dict[str, Any]) -> dict[str, Any]:
         media = dict(message.get("video") or {})
         media["kind"] = "video"
         return media
+    if message.get("video_note"):
+        media = dict(message.get("video_note") or {})
+        media["kind"] = "video_note"
+        return media
     if message.get("document"):
         media = dict(message.get("document") or {})
         filename = str(media.get("file_name") or "")
@@ -3780,7 +3786,7 @@ def call_recording_candidate_rows(limit: int = 8) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in reversed(read_business_messages(limit=500)):
         kind = str(row.get("kind") or "").lower()
-        if kind not in {"voice", "audio", "video", "document"}:
+        if kind not in {"voice", "audio", "video", "video_note", "document"}:
             continue
         rows.append({
             "ts": row.get("ts") or "",
@@ -10117,22 +10123,34 @@ def transcribe_with_whisper(config: AgentConfig, audio_path: Path, work_dir: Pat
     return candidates[0].read_text(encoding="utf-8").strip()
 
 
+def transcribable_speech_media(message: dict[str, Any]) -> dict[str, Any]:
+    for key in ("voice", "audio", "video_note", "video"):
+        media = message.get(key)
+        if media:
+            row = dict(media)
+            row["kind"] = key
+            return row
+    return {}
+
+
 def transcribe_voice(config: AgentConfig, message: dict[str, Any]) -> tuple[str, str, str]:
     if not config.voice_enabled:
         raise RuntimeError("Voice processing is disabled")
-    voice = message.get("voice") or message.get("audio") or {}
+    voice = transcribable_speech_media(message)
     duration = int(voice.get("duration") or 0)
     if duration > config.voice_max_seconds:
         raise RuntimeError(f"Voice is too long: {duration}s > {config.voice_max_seconds}s")
     file_id = voice.get("file_id")
     if not file_id:
-        raise RuntimeError("No Telegram file_id in voice/audio message")
+        raise RuntimeError("No Telegram file_id in speech media message")
+    file_path = telegram_file_path(config, str(file_id))
+    suffix = Path(file_path).suffix or (".mp4" if voice.get("kind") in {"video", "video_note"} else ".oga")
     with tempfile.TemporaryDirectory(prefix="tg-dashboard-voice-") as tmp:
         work_dir = Path(tmp)
-        audio_path = work_dir / "voice.oga"
+        audio_path = work_dir / f"speech{suffix}"
         text_path = work_dir / "voice.txt"
         download_telegram_file(config, str(file_id), audio_path)
-        media_local_path = store_local_media_file(config, audio_path, str(file_id), "voice", message.get("message_id"))
+        media_local_path = store_local_media_file(config, audio_path, str(file_id), str(voice.get("kind") or "voice"), message.get("message_id"))
         if config.voice_command:
             transcript = run_transcribe_command(config.voice_command, audio_path, text_path)
             return transcript, media_local_path, transcription_language(text_path, config.voice_language)
@@ -10567,10 +10585,16 @@ def text_from_message(config: AgentConfig, message: dict[str, Any]) -> tuple[str
         media_file_id = best_media_file_id(message)
         media_local_path = store_telegram_file(config, media_file_id, "caption-media", message.get("message_id")) if media_file_id else ""
         return str(message.get("caption") or ""), {"kind": "caption", "media_file_id": media_file_id, "media_local_path": media_local_path}
-    if message.get("voice") or message.get("audio"):
+    speech_media = transcribable_speech_media(message)
+    if speech_media:
         transcript, media_local_path, detected_language = transcribe_voice(config, message)
-        voice = message.get("voice") or message.get("audio") or {}
-        return transcript, {"kind": "voice", "transcript": transcript, "transcript_language": detected_language, "media_file_id": voice.get("file_id"), "media_local_path": media_local_path}
+        return transcript, {
+            "kind": speech_media.get("kind") or "voice",
+            "transcript": transcript,
+            "transcript_language": normalize_supported_text_language(detected_language),
+            "media_file_id": speech_media.get("file_id"),
+            "media_local_path": media_local_path,
+        }
     if message.get("photo"):
         media_file_id = best_media_file_id(message)
         media_local_path = store_telegram_file(config, media_file_id, "photo", message.get("message_id")) if media_file_id else ""
@@ -10597,6 +10621,9 @@ def best_media_file_id(message: dict[str, Any]) -> str:
     photos = message.get("photo") or []
     if photos:
         return str(photos[-1].get("file_id") or "")
+    media = transcribable_speech_media(message)
+    if media:
+        return str(media.get("file_id") or "")
     document = message.get("document") or {}
     return str(document.get("file_id") or "")
 
