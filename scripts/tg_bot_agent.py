@@ -8344,6 +8344,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
     chunks = []
     for idx, row in enumerate(rows, start=1):
         text = compact_text(str(row.get("text") or ""), 900)
+        row_language = detect_text_language(text)
         chat_title = str(row.get("chat_title") or row.get("chat_id") or "чат")
         author = str(row.get("username") or row.get("first_name") or "участник").strip().lstrip("@")
         source = str(row.get("source") or "").strip()
@@ -8356,7 +8357,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
             priority_label = "первый приоритет" if priority_rank(row, group_terms) < len(group_terms) else "остальные"
         reason = clean_capture_reason(str(row.get("capture_reason") or ""))
         chunks.append(
-            f"[{idx}] {row.get('ts') or ''} / {priority_label} / {source_label} / {reason}\n{text}"
+            f"[{idx}] {row.get('ts') or ''} / language:{row_language} / {priority_label} / {source_label} / {reason}\n{text}"
         )
     if use_uzbek:
         prompt = "\n\n".join([
@@ -8407,7 +8408,8 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Это должно быть одно сообщение без дублей: не пиши сначала русский пересказ, а затем тот же смысл на узбекском.",
         "В сводках разрешены только два языка: русский и узбекский. Не используй английский, кроме названий сервисов, ссылок, имен и коротких цитат из исходного сообщения.",
         "Общий вывод, заголовки и сквозные управленческие выводы пиши на языке отправления сводки. Для текущих регулярных сводок это русский.",
-        "Информацию по конкретному чату пиши на языке этого чата: русский чат — русский пункт, узбекский чат — узбекский пункт. Если пункт объединяет несколько чатов на разных языках, раздели его по чатам.",
+        "Информацию по конкретному чату пиши строго на языке этого чата, смотри метку language:ru или language:uz перед сообщением. Русский чат — русский пункт. Узбекский чат — узбекский пункт, даже если запрос о сводке был на русском.",
+        "Если в одном разделе есть чаты на разных языках, не переводи их в общий язык: оставь каждый пункт на языке своего чата. Если пункт объединяет несколько чатов на разных языках, раздели его по чатам.",
         "Не переводи цитаты, имена, короткие формулировки и названия чатов.",
         "Пиши живо и конкретно. Без markdown-таблиц, без канцелярита, без рекламного тона.",
         "Первый приоритет: Мухрим, Мохинур, Нозима, Муборак, Азиз, Абдулазиз, Малика Абдулазизова и другие руководители. Их сообщения обязательно отражай в разделе 'Важное', если там есть смысловой сигнал.",
