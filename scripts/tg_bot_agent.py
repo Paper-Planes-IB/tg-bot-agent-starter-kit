@@ -8474,6 +8474,38 @@ def format_summary_html(summary: str, use_uzbek: bool) -> str:
     return escaped
 
 
+def linked_group_title(config: AgentConfig, row: dict[str, Any], cache: dict[str, str]) -> str:
+    chat_id = str(row.get("chat_id") or "").strip()
+    title = str(row.get("chat_title") or chat_id or "группа").strip()
+    if not chat_id:
+        return escape_html(title)
+    link = cache.get(chat_id)
+    if link is None:
+        link = telegram_chat_link(config, chat_id) or telegram_message_link(row)
+        cache[chat_id] = link
+    if not link:
+        return escape_html(title)
+    return f'<a href="{escape_html(link)}">{escape_html(title)}</a>'
+
+
+def link_group_titles_in_summary(config: AgentConfig, summary_html: str, rows: list[dict[str, Any]]) -> str:
+    cache: dict[str, str] = {}
+    replacements: list[tuple[str, str]] = []
+    for row in rows:
+        if str(row.get("source") or "").strip() == "telegram_business":
+            continue
+        title = str(row.get("chat_title") or row.get("chat_id") or "").strip()
+        if not title:
+            continue
+        linked_title = linked_group_title(config, row, cache)
+        plain_group = f"Группа {escape_html(title)}"
+        linked_group = f"Группа {linked_title}"
+        replacements.append((plain_group, linked_group))
+    for source, target in sorted(set(replacements), key=lambda item: len(item[0]), reverse=True):
+        summary_html = summary_html.replace(source, target)
+    return summary_html
+
+
 def rows_contain_uzbek(rows: list[dict[str, Any]]) -> bool:
     return any(detect_text_language(str(row.get("text") or "")) == "uz" for row in rows)
 
@@ -8552,7 +8584,7 @@ def build_group_important_message(
         return "\n".join(lines)
     summary = summarize_group_messages(config, selected_rows)
     if summary:
-        lines.extend(["", format_summary_html(summary, use_uzbek)])
+        lines.extend(["", link_group_titles_in_summary(config, format_summary_html(summary, use_uzbek), selected_rows)])
     else:
         lines.extend(["", "Asosiy fikrlar:" if use_uzbek else "Ключевые идеи:"])
         for idx, row in enumerate(selected_rows, start=1):
