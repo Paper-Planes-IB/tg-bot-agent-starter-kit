@@ -8337,6 +8337,21 @@ TG_COMMUNICATION_STYLE_UZ = "\n".join([
 ])
 
 
+def group_summary_context(chat_title: str) -> str:
+    normalized = normalize_text(chat_title)
+    if "опер" in normalized or normalized == "ог" or " ог" in normalized:
+        return "group_type:operational_hq"
+    if "tg-ox" in normalized or "tg ox" in normalized or "tg-pp" in normalized or "tg pp" in normalized or "tg+pp" in normalized:
+        return "group_type:external_consultants"
+    if "ecom" in normalized or "e-commerce" in normalized or "e commerce" in normalized:
+        return "group_type:ecom_team"
+    if "mp team" in normalized or normalized.startswith("mp ") or " marketplace" in normalized:
+        return "group_type:mp_team"
+    if "it team" in normalized or normalized.startswith("it ") or " ит " in normalized:
+        return "group_type:it_team"
+    return "group_type:other"
+
+
 def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) -> str:
     use_uzbek = False
     business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
@@ -8348,6 +8363,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         chat_title = str(row.get("chat_title") or row.get("chat_id") or "чат")
         author = str(row.get("username") or row.get("first_name") or "участник").strip().lstrip("@")
         source = str(row.get("source") or "").strip()
+        group_context = group_summary_context(chat_title)
         if source == "telegram_business":
             source_label = f"Личный чат: @{author}" if author != "участник" else f"Личный чат: {chat_title}"
             priority_label = "первый приоритет" if priority_rank(row, business_priority_terms) < len(business_priority_terms) else "остальные"
@@ -8357,7 +8373,7 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
             priority_label = "первый приоритет" if priority_rank(row, group_terms) < len(group_terms) else "остальные"
         reason = clean_capture_reason(str(row.get("capture_reason") or ""))
         chunks.append(
-            f"[{idx}] {row.get('ts') or ''} / language:{row_language} / {priority_label} / {source_label} / {reason}\n{text}"
+            f"[{idx}] {row.get('ts') or ''} / language:{row_language} / {priority_label} / {group_context} / {source_label} / {reason}\n{text}"
         )
     if use_uzbek:
         prompt = "\n\n".join([
@@ -8414,6 +8430,13 @@ def summarize_group_messages(config: AgentConfig, rows: list[dict[str, Any]]) ->
         "Пиши живо и конкретно. Без markdown-таблиц, без канцелярита, без рекламного тона.",
         "Первый приоритет: Мухрим, Мохинур, Нозима, Муборак, Азиз, Абдулазиз, Малика Абдулазизова и другие руководители. Их сообщения обязательно отражай в разделе 'Важное', если там есть смысловой сигнал.",
         "Остальных отправителей отражай ниже в отдельном разделе 'Другие чаты': укажи именно ники людей и краткий смысл, без длинного пересказа.",
+        "Для разных групп применяй разные акценты:",
+        "- Опер группа (ОГ): это самая важная группа. Вытащи задачи по темам, важные уведомления, решения, блокеры и кому нужен следующий шаг.",
+        "- TG-OX Админ и TG-PP: это чаты с внешними консультантами. Держи фокус на ходе диалога, подвисших вопросах, обещаниях без ответа, следующих пингах.",
+        "- Ecom team: дай сводку по продажам, если в сообщениях есть продажи/заявки/суммы/заказы; отдельно отметь просадки, срочные контакты и вопросы.",
+        "- MP team: дай сводку по количеству продаж, если в сообщениях есть продажи/заказы/цифры; отдельно отметь аномалии и вопросы.",
+        "- IT team: дай короткую сводку и подвисшие вопросы, без длинного пересказа.",
+        "- Для остальных групп: кратко только смысловые сигналы, задачи и риски.",
         "Названия разделов пиши ровно так, без эмоджи: Итог дня, Важное, Другие чаты, Задачи, Что зависло, Кого пинговать.",
         "Внутренние номера источников используй только для проверки фактов. В ответе не ставь ссылки вида [1], [2].",
         "Не выдумывай факты, ответственных и решения. Если есть только намёк, пиши 'похоже' или 'нужно уточнить'.",
