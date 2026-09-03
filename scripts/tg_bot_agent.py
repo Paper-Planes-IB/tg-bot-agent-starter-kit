@@ -3858,6 +3858,12 @@ def format_period_window(start_dt: dt.datetime | None, end_dt: dt.datetime | Non
     return f"{start_display.strftime('%Y-%m-%d %H:%M')} - {end_display.strftime('%Y-%m-%d %H:%M')} Asia/Tashkent"
 
 
+def default_summary_window(start_date: dt.date, end_dt: dt.datetime | None = None) -> tuple[dt.datetime, dt.datetime]:
+    end_time = end_dt or dt.datetime.now()
+    start_agent = dt.datetime.combine(start_date, dt.time.min)
+    return agent_to_local_time(start_agent), end_time
+
+
 def save_inbox_item(
     config: AgentConfig,
     item: dict[str, Any],
@@ -8505,7 +8511,8 @@ def build_group_important_message(
     source_rows = captured or rows
     selected_rows = priority_sorted_rows(filter_summary_input_rows(source_rows), group_priority_terms)[:limit]
     use_uzbek = False
-    title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
+    label_start_dt, label_end_dt = (start_dt, end_dt) if start_dt and end_dt else default_summary_window(start_date, end_dt)
+    title_period = format_period_window(label_start_dt, label_end_dt, use_uzbek)
     title = f"Важное во внешних чатах за {title_period}"
     lines = [
         f"📌 <b>{escape_html(title)}</b>",
@@ -8610,7 +8617,8 @@ def build_business_summary_message(
     business_priority_terms = priority_terms("TG_AGENT_PRIORITY_BUSINESS_CHATS", DEFAULT_PRIORITY_BUSINESS_CHATS)
     selected_rows = priority_sorted_rows(filter_summary_input_rows(rows), business_priority_terms)[:limit]
     use_uzbek = False
-    title_period = format_period_window(start_dt, end_dt, use_uzbek) or (today_date.isoformat() if days == 1 else f"{start_date.isoformat()} - {today_date.isoformat()}")
+    label_start_dt, label_end_dt = (start_dt, end_dt) if start_dt and end_dt else default_summary_window(start_date, end_dt)
+    title_period = format_period_window(label_start_dt, label_end_dt, use_uzbek)
     title = f"Личные business-чаты за {title_period}"
     lines = [
         f"📌 <b>{escape_html(title)}</b>",
